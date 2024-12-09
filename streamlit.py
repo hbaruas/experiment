@@ -198,21 +198,20 @@ common_year_columns = sorted(
     .union(available_year_columns_previous)
 )
 
-# Fill missing years with 0 for calculations
-filtered_ANA23 = filtered_ANA23.reindex(columns=common_year_columns, fill_value=0)
-filtered_Current = filtered_Current.reindex(columns=common_year_columns, fill_value=0)
-filtered_Previous = filtered_Previous.reindex(columns=common_year_columns, fill_value=0)
+
+# Ensure numeric data in the filtered DataFrames
+ana23_values = pd.to_numeric(filtered_ANA23[common_year_columns].iloc[0], errors="coerce").fillna(0)
+current_values = pd.to_numeric(filtered_Current[common_year_columns].iloc[0], errors="coerce").fillna(0)
+previous_values = pd.to_numeric(filtered_Previous[common_year_columns].iloc[0], errors="coerce").fillna(0)
 
 # Calculate growth rates
 def calculate_growth_rates(values):
+    # Ensure values are numeric
+    values = pd.to_numeric(values, errors="coerce").fillna(0)
     return [0] + [
         (((values[i] - values[i - 1]) / values[i - 1]) * 100 if values[i - 1] != 0 else 0)
         for i in range(1, len(values))
     ]
-
-ana23_values = filtered_ANA23[common_year_columns].iloc[0]
-current_values = filtered_Current[common_year_columns].iloc[0]
-previous_values = filtered_Previous[common_year_columns].iloc[0]
 
 ana23_growth_rates = calculate_growth_rates(ana23_values)
 current_growth_rates = calculate_growth_rates(current_values)
