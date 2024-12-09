@@ -1,0 +1,183 @@
+import pandas as pd
+import plotly.graph_objects as go
+import ipywidgets as widgets
+from IPython.display import display
+
+# Sample DataFrames (replace with actual data)
+ANA23 = pd.DataFrame({
+    'Sector': ['A', 'B'],
+    'Industry': ['Industry1', 'Industry2'],
+    'Product': ['Product1', 'Product2'],
+    'Transaction': ['T1', 'T2'],
+    '1997': [100, 200],
+    '1998': [None, 210],
+    '1999': [180, None],
+    '2000': [190, 220]
+})
+
+Current = pd.DataFrame({
+    'Sector': ['A', 'B'],
+    'Industry': ['Industry1', 'Industry2'],
+    'Product': ['Product1', 'Product2'],
+    'Transaction': ['T1', 'T2'],
+    '1997': [120, 190],
+    '1998': [None, 220],
+    '1999': [170, None],
+    '2000': [200, 230]
+})
+
+Previous = pd.DataFrame({
+    'Sector': ['A', 'B'],
+    'Industry': ['Industry1', 'Industry2'],
+    'Product': ['Product1', 'Product2'],
+    'Transaction': ['T1', 'T2'],
+    '1997': [90, 180],
+    '1998': [None, 200],
+    '1999': [160, None],
+    '2000': [180, 210]
+})
+
+# Strip any leading or trailing whitespace from column names
+ANA23.columns = ANA23.columns.str.strip()
+Current.columns = Current.columns.str.strip()
+Previous.columns = Previous.columns.str.strip()
+
+# Define the list of year columns
+year_columns = [str(year) for year in range(1997, 2023)]
+
+# Dropdowns to select filter options
+sector_dropdown = widgets.Dropdown(options=ANA23['Sector'].unique(), description='Sector:')
+industry_dropdown = widgets.Dropdown(options=ANA23['Industry'].unique(), description='Industry:')
+product_dropdown = widgets.Dropdown(options=ANA23['Product'].unique(), description='Product:')
+transaction_dropdown = widgets.Dropdown(options=ANA23['Transaction'].unique(), description='Transaction:')
+
+def plot_growth_rate_data(sector, industry, product, transaction):
+    # Filter data based on selection for ANA23, Current, and Previous datasets
+    filtered_ANA23 = ANA23[(ANA23['Sector'] == sector) &
+                           (ANA23['Industry'] == industry) &
+                           (ANA23['Product'] == product) &
+                           (ANA23['Transaction'] == transaction)]
+
+    filtered_Current = Current[(Current['Sector'] == sector) &
+                               (Current['Industry'] == industry) &
+                               (Current['Product'] == product) &
+                               (Current['Transaction'] == transaction)]
+
+    filtered_previous = Previous[(Previous['Sector'] == sector) &
+                                  (Previous['Industry'] == industry) &
+                                  (Previous['Product'] == product) &
+                                  (Previous['Transaction'] == transaction)]
+
+    # Check if any filtered data is empty
+    if filtered_ANA23.empty or filtered_Current.empty or filtered_previous.empty:
+        print("No data available for the selected combination.")
+        return
+
+    # Determine available year columns in the filtered data
+    available_year_columns_ana23 = [year for year in year_columns if year in filtered_ANA23.columns]
+    available_year_columns_Current = [year for year in year_columns if year in filtered_Current.columns]
+    available_year_columns_previous = [year for year in year_columns if year in filtered_previous.columns]
+
+    # Use the shortest list of available years for consistency
+    common_year_columns = min(
+        available_year_columns_ana23[1:],
+        available_year_columns_Current[1:],
+        available_year_columns_previous[1:],
+        key=len
+    )
+
+    # Create temporary DataFrames for calculations (replace NaN and non-numeric values with 0)
+    temp_ANA23 = filtered_ANA23[available_year_columns_ana23].apply(pd.to_numeric, errors='coerce').fillna(0)
+    temp_Current = filtered_Current[available_year_columns_Current].apply(pd.to_numeric, errors='coerce').fillna(0)
+    temp_previous = filtered_previous[available_year_columns_previous].apply(pd.to_numeric, errors='coerce').fillna(0)
+
+    # Access row values safely for calculation
+    ana23_values = temp_ANA23.iloc[0]
+    Current_values = temp_Current.iloc[0]
+    previous_values = temp_previous.iloc[0]
+
+    # Calculate year-on-year growth rates for ANA23, Current, and Previous, multiplied by 100
+    ana23_growth_rates = [
+        (((ana23_values.iloc[i] - ana23_values.iloc[i - 1]) / ana23_values.iloc[i - 1]) * 100
+         if ana23_values.iloc[i - 1] != 0 else 0)
+        for i in range(1, len(common_year_columns) + 1)
+    ]
+    Current_growth_rates = [
+        (((Current_values.iloc[i] - Current_values.iloc[i - 1]) / Current_values.iloc[i - 1]) * 100
+         if Current_values.iloc[i - 1] != 0 else 0)
+        for i in range(1, len(common_year_columns) + 1)
+    ]
+    previous_growth_rates = [
+        (((previous_values.iloc[i] - previous_values.iloc[i - 1]) / previous_values.iloc[i - 1]) * 100
+         if previous_values.iloc[i - 1] != 0 else 0)
+        for i in range(1, len(common_year_columns) + 1)
+    ]
+
+    # Adjust lengths for consistency with common_year_columns
+    ana23_growth_rates = ana23_growth_rates[:len(common_year_columns)]
+    Current_growth_rates = Current_growth_rates[:len(common_year_columns)]
+    previous_growth_rates = previous_growth_rates[:len(common_year_columns)]
+
+    # Create a DataFrame to display the growth rates
+    growth_rates_df = pd.DataFrame({
+        'Year': common_year_columns,
+        'ANA23 Growth Rate (%)': ana23_growth_rates,
+        'Current Growth Rate (%)': Current_growth_rates,
+        'Previous Growth Rate (%)': previous_growth_rates
+    })
+
+    # Display the growth rates as a DataFrame
+    print("Growth Rates:")
+    display(growth_rates_df)
+
+    # Create bar chart for growth rates
+    bar_fig = go.Figure()
+
+    # Add bar for ANA23 growth rates
+    bar_fig.add_trace(go.Bar(
+        x=common_year_columns, y=ana23_growth_rates, name='ANA23 Growth Rate',
+        text=[f"{value:.2f}" for value in ana23_growth_rates], textposition='outside'
+    ))
+
+    # Add bar for Current growth rates
+    bar_fig.add_trace(go.Bar(
+        x=common_year_columns, y=Current_growth_rates, name='Current Growth Rate',
+        text=[f"{value:.2f}" for value in Current_growth_rates], textposition='outside'
+    ))
+
+    # Add bar for Previous growth rates
+    bar_fig.add_trace(go.Bar(
+        x=common_year_columns, y=previous_growth_rates, name='Previous Growth Rate',
+        text=[f"{value:.2f}" for value in previous_growth_rates], textposition='outside'
+    ))
+
+    # Update the layout of the bar chart
+    bar_fig.update_layout(title='Yearly Growth Rate Comparison for Selected Filter',
+                          xaxis_title='Year',
+                          yaxis_title='Growth Rate (%)',
+                          barmode='group')
+
+    # Display the bar chart
+    bar_fig.show()
+
+    # Display the filtered original DataFrames to show that null or non-numeric values are intact
+    print("Filtered ANA23 DataFrame (Original):")
+    display(filtered_ANA23)
+
+    print("Filtered Current DataFrame (Original):")
+    display(filtered_Current)
+
+    print("Filtered Previous DataFrame (Original):")
+    display(filtered_previous)
+
+# Link widgets with the function and arrange dropdowns horizontally
+ui = widgets.HBox([sector_dropdown, industry_dropdown, product_dropdown, transaction_dropdown])
+out = widgets.interactive_output(plot_growth_rate_data, {
+    'sector': sector_dropdown,
+    'industry': industry_dropdown,
+    'product': product_dropdown,
+    'transaction': transaction_dropdown
+})
+
+# Display the widgets and the output
+display(ui, out)
