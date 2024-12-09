@@ -31,9 +31,16 @@ def plot_filtered_data(sector, industry, product, transaction):
     available_year_columns_ana23 = [year for year in year_columns if year in filtered_ANA23.columns]
     available_year_columns_current = [year for year in year_columns if year in filtered_current.columns]
 
+    # Union of all available year columns
+    common_year_columns = sorted(set(available_year_columns_ana23).union(available_year_columns_current))
+
+    # Reindex ANA23 and Current to ensure both have all common years, filling missing years with 0
+    filtered_ANA23 = filtered_ANA23.reindex(columns=common_year_columns, fill_value=0)
+    filtered_current = filtered_current.reindex(columns=common_year_columns, fill_value=0)
+
     # Create temporary DataFrames for plotting
-    temp_ANA23 = filtered_ANA23[available_year_columns_ana23].apply(pd.to_numeric, errors='coerce').fillna(0)
-    temp_current = filtered_current[available_year_columns_current].apply(pd.to_numeric, errors='coerce').fillna(0)
+    temp_ANA23 = filtered_ANA23[common_year_columns].apply(pd.to_numeric, errors='coerce').fillna(0)
+    temp_current = filtered_current[common_year_columns].apply(pd.to_numeric, errors='coerce').fillna(0)
 
     # Access row values safely for plotting
     ana23_values = temp_ANA23.iloc[0]
@@ -43,11 +50,11 @@ def plot_filtered_data(sector, industry, product, transaction):
     fig = go.Figure()
 
     # Add line for ANA23
-    fig.add_trace(go.Scatter(x=available_year_columns_ana23, y=ana23_values,
+    fig.add_trace(go.Scatter(x=common_year_columns, y=ana23_values,
                              mode='lines+markers', name='ANA23'))
 
     # Add line for Current
-    fig.add_trace(go.Scatter(x=available_year_columns_current, y=current_values,
+    fig.add_trace(go.Scatter(x=common_year_columns, y=current_values,
                              mode='lines+markers', name='Current'))
 
     # Update the layout of the chart
