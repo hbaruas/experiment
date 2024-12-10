@@ -278,13 +278,12 @@ def get_single_file_from_directory(directory):
         st.stop()
     return os.path.join(directory, files[0])
 
-# Get file paths
-ANA_PATH = get_single_file_from_directory(ANA_DIR)
-PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
+# Function to load datasets
+def load_datasets():
+    # Get file paths
+    ANA_PATH = get_single_file_from_directory(ANA_DIR)
+    PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
 
-# Cache datasets to load only once per session
-@st.cache_data
-def load_datasets_with_metrics():
     # Load datasets
     ANA23 = pd.read_excel(ANA_PATH, sheet_name="Pre-Change (A)")
     Current = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Post-Change (A)")
@@ -305,8 +304,14 @@ def load_datasets_with_metrics():
 
     return ANA23, Current, Previous, year_columns
 
-# Load datasets
-ANA23, Current, Previous, year_columns = load_datasets_with_metrics()
+# Use session state to store data
+if "datasets" not in st.session_state:
+    with st.spinner("Loading datasets..."):
+        st.session_state.datasets = load_datasets()
+        st.success("Data loaded successfully!")
+
+# Retrieve datasets from session state
+ANA23, Current, Previous, year_columns = st.session_state.datasets
 
 # Sidebar filters
 st.sidebar.header("Filter Options")
