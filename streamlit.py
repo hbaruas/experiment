@@ -257,3 +257,149 @@ bar_chart.add_trace(
 bar_chart.update_layout(title="Yearly Growth Rate Comparison", xaxis_title="Year", yaxis_title="Growth Rate (%)", barmode="group")
 st.plotly_chart(bar_chart)
 
+
+
+
+
+import os
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+
+# Define directories for relative paths
+BASE_DIR = os.getcwd()
+ANA_DIR = os.path.join(BASE_DIR, "ANA")
+PREVIOUS_CURRENT_DIR = os.path.join(BASE_DIR, "Previous_Current")
+
+# Helper function to ensure only one file exists in a directory
+def get_single_file_from_directory(directory):
+    files = [file for file in os.listdir(directory) if os.path.isfile(os.path.join(directory, file))]
+    if len(files) != 1:
+        st.error(f"Error: Expected exactly one file in the directory '{directory}', but found {len(files)}.")
+        st.stop()
+    return os.path.join(directory, files[0])
+
+# Get file paths
+ANA_PATH = get_single_file_from_directory(ANA_DIR)
+PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
+
+# Cache datasets to load only once per session
+@st.cache_data
+def load_datasets_with_metrics():
+    # Load datasets
+    ANA23 = pd.read_excel(ANA_PATH, sheet_name="Pre-Change (A)")
+    Current = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Post-Change (A)")
+    Previous = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Pre-Change (A)")
+
+    # Create "Series" column for consistency
+    for df in [ANA23, Current, Previous]:
+        df["Series"] = df["Sector"].astype(str) + df["Transaction"].astype(str) + df["Industry"].astype(str) + df["Product"].astype(str)
+        cols = ["Series"] + [col for col in df.columns if col != "Series"]
+        df = df[cols]
+
+    # Strip whitespace and standardize column names
+    for df in [ANA23, Current, Previous]:
+        df.columns = df.columns.astype(str).str.strip()
+
+    # Define year columns
+    year_columns = [col for col in ANA23.columns if col.isdigit()]
+
+    # Precompute growth rates for all rows
+    def compute_growth_rates(df):
+        rates = {}
+        for index, row in df.iterrows():
+            values = row[year_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
+            rates[row["Series"]] = [
+                0 if i == 0 else ((values.iloc[i] - values.iloc[i - 1]) / values.iloc[i - 1]) * 100 if values.iloc[i - 1] != 0 else 0
+                for i in range(len(values))
+            ]
+        return rates
+
+    # Compute growth rates for all datasets
+    ANA23_growth_rates = compute_growth_rates(ANA23)
+    Current_growth_rates = compute_growth_rates(Current)
+    Previous_growth_rates = compute_growth_rates(Previous)
+
+    return ANA23, Current, Previous, year_columns, ANA23_growth_rates, Current_growth_rates, Previous_growth_rates
+
+# Load datasets with metrics
+(
+    ANA23,
+    Current,
+    Previous,
+    year_columns,
+    ANA23_growth_rates,
+    Current_growth_rates,
+    Previous_growth_rates,
+) = load_datasets_with_metrics()
+
+# Sidebar filters
+st.sidebar.header("Filter Options")
+sector = st.sidebar.selectbox("Select Sector", ANA23["Sector"].unique())
+industry = st.sidebar.selectbox("Select Industry", ANA23["Industry"].unique())
+product = st.sidebar.selectbox("Select Product", ANA23["Product"].unique())
+transaction = st.sidebar.selectbox("Select Transaction", ANA23["Transaction"].unique())
+
+# Filter datasets dynamically
+def filter_datasets(sector, industry, product, transaction):
+    filtered_ANA23 = ANA23[
+        (ANA23["Sector"] == sector)
+        & (ANA23["Industry"] == industry)
+        & (ANA23["Product"] == product)
+        & (ANA23["Transaction"] == transaction)
+    ]
+    filtered_Current = Current[
+        (Current["Sector"] == sector)
+        & (Current["Industry"] == industry)
+        & (Current["Product"] == product)
+        & (Current["Transaction"] == transaction)
+    ]
+    filtered_Previous = Previous[
+        (Previous["Sector"] == sector)
+        & (Previous["Industry"] == industry)
+        & (Previous["Product"] == product)
+        & (Previous["Transaction"] == transaction)
+    ]
+    return filtered_ANA23, filtered_Current, filtered_Previous
+
+# Apply filtering
+filtered_ANA23, filtered_Current, filtered_Previous = filter_datasets(sector, industry, product, transaction)
+
+if filtered_ANA23.empty or filtered_Current.empty or filtered_Previous.empty:
+    st.warning("No data available for the selected combination.")
+    st.stop()
+
+# Fetch precomputed growth rates
+filtered_series = filtered_ANA23["Series"].iloc[0]
+ana23_growth = ANA23_growth_rates[filtered_series]
+current_growth = Current_growth_rates[filtered_series]
+previous_growth = Previous_growth_rates[filtered_series]
+
+# Ensure numeric data for plotting
+ana23_values = filtered_ANA23[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
+current_values = filtered_Current[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
+previous_values = filtered_Previous[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
+
+# Display filtered datasets
+st.subheader("Filtered Datasets")
+st.dataframe(filtered_ANA23)
+st.dataframe(filtered_Current)
+st.dataframe(filtered_Previous)
+
+# Plot Line Chart
+st.subheader("Line Chart: Yearly Comparison")
+fig_line = go.Figure()
+fig_line.add_trace(go.Scatter(x=year_columns, y=ana23_values, mode="lines+markers", name="ANA23"))
+fig_line.add_trace(go.Scatter(x=year_columns, y=current_values, mode="lines+markers", name="Current"))
+fig_line.add_trace(go.Scatter(x=year_columns, y=previous_values, mode="lines+markers", name="Previous"))
+fig_line.update_layout(title="Yearly Comparison", xaxis_title="Year", yaxis_title="Values")
+st.plotly_chart(fig_line)
+
+# Plot Bar Chart for Growth Rates
+st.subheader("Bar Chart: Growth Rates")
+fig_bar = go.Figure()
+fig_bar.add_trace(go.Bar(x=year_columns, y=ana23_growth, name="ANA23 Growth Rate"))
+fig_bar.add_trace(go.Bar(x=year_columns, y=current_growth, name="Current Growth Rate"))
+fig_bar.add_trace(go.Bar(x=year_columns, y=previous_growth, name="Previous Growth Rate"))
+fig_bar.update_layout(title="Growth Rates Comparison", xaxis_title="Year", yaxis_title="Growth Rate (%)", barmode="group")
+st.plotly_chart(fig_bar)
