@@ -260,7 +260,6 @@ st.plotly_chart(bar_chart)
 
 
 
-
 import os
 import pandas as pd
 import streamlit as st
@@ -304,34 +303,10 @@ def load_datasets_with_metrics():
     # Define year columns
     year_columns = [col for col in ANA23.columns if col.isdigit()]
 
-    # Precompute growth rates for all rows
-    def compute_growth_rates(df):
-        rates = {}
-        for index, row in df.iterrows():
-            values = row[year_columns].apply(pd.to_numeric, errors="coerce").fillna(0)
-            rates[row["Series"]] = [
-                0 if i == 0 else ((values.iloc[i] - values.iloc[i - 1]) / values.iloc[i - 1]) * 100 if values.iloc[i - 1] != 0 else 0
-                for i in range(len(values))
-            ]
-        return rates
+    return ANA23, Current, Previous, year_columns
 
-    # Compute growth rates for all datasets
-    ANA23_growth_rates = compute_growth_rates(ANA23)
-    Current_growth_rates = compute_growth_rates(Current)
-    Previous_growth_rates = compute_growth_rates(Previous)
-
-    return ANA23, Current, Previous, year_columns, ANA23_growth_rates, Current_growth_rates, Previous_growth_rates
-
-# Load datasets with metrics
-(
-    ANA23,
-    Current,
-    Previous,
-    year_columns,
-    ANA23_growth_rates,
-    Current_growth_rates,
-    Previous_growth_rates,
-) = load_datasets_with_metrics()
+# Load datasets
+ANA23, Current, Previous, year_columns = load_datasets_with_metrics()
 
 # Sidebar filters
 st.sidebar.header("Filter Options")
@@ -369,37 +344,54 @@ if filtered_ANA23.empty or filtered_Current.empty or filtered_Previous.empty:
     st.warning("No data available for the selected combination.")
     st.stop()
 
-# Fetch precomputed growth rates
-filtered_series = filtered_ANA23["Series"].iloc[0]
-ana23_growth = ANA23_growth_rates[filtered_series]
-current_growth = Current_growth_rates[filtered_series]
-previous_growth = Previous_growth_rates[filtered_series]
+# Convert columns for numeric calculations while keeping original DataFrames intact
+def clean_numeric_data(df, year_columns):
+    numeric_df = df.copy()
+    for col in year_columns:
+        numeric_df[col] = pd.to_numeric(numeric_df[col], errors="coerce").fillna(0)  # Replace non-numeric with 0
+    return numeric_df
 
-# Ensure numeric data for plotting
-ana23_values = filtered_ANA23[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
-current_values = filtered_Current[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
-previous_values = filtered_Previous[year_columns].iloc[0].apply(pd.to_numeric, errors="coerce").fillna(0)
+numeric_ANA23 = clean_numeric_data(filtered_ANA23, year_columns)
+numeric_Current = clean_numeric_data(filtered_Current, year_columns)
+numeric_Previous = clean_numeric_data(filtered_Previous, year_columns)
+
+# Calculate growth rates
+def calculate_growth_rates(df, year_columns):
+    rates = []
+    for i in range(1, len(year_columns)):
+        previous = df[year_columns[i - 1]]
+        current = df[year_columns[i]]
+        growth = ((current - previous) / previous) * 100 if previous != 0 else 0
+        rates.append(growth)
+    return [0] + rates  # Start with 0% growth for the first year
+
+ana23_growth_rates = calculate_growth_rates(numeric_ANA23.iloc[0], year_columns)
+current_growth_rates = calculate_growth_rates(numeric_Current.iloc[0], year_columns)
+previous_growth_rates = calculate_growth_rates(numeric_Previous.iloc[0], year_columns)
 
 # Display filtered datasets
 st.subheader("Filtered Datasets")
+st.write("**Filtered ANA23 (Original):**")
 st.dataframe(filtered_ANA23)
+st.write("**Filtered Current (Original):**")
 st.dataframe(filtered_Current)
+st.write("**Filtered Previous (Original):**")
 st.dataframe(filtered_Previous)
 
-# Plot Line Chart
+# Line Chart
 st.subheader("Line Chart: Yearly Comparison")
 fig_line = go.Figure()
-fig_line.add_trace(go.Scatter(x=year_columns, y=ana23_values, mode="lines+markers", name="ANA23"))
-fig_line.add_trace(go.Scatter(x=year_columns, y=current_values, mode="lines+markers", name="Current"))
-fig_line.add_trace(go.Scatter(x=year_columns, y=previous_values, mode="lines+markers", name="Previous"))
+fig_line.add_trace(go.Scatter(x=year_columns, y=numeric_ANA23.iloc[0][year_columns], mode="lines+markers", name="ANA23"))
+fig_line.add_trace(go.Scatter(x=year_columns, y=numeric_Current.iloc[0][year_columns], mode="lines+markers", name="Current"))
+fig_line.add_trace(go.Scatter(x=year_columns, y=numeric_Previous.iloc[0][year_columns], mode="lines+markers", name="Previous"))
 fig_line.update_layout(title="Yearly Comparison", xaxis_title="Year", yaxis_title="Values")
 st.plotly_chart(fig_line)
 
-# Plot Bar Chart for Growth Rates
+# Bar Chart for Growth Rates
 st.subheader("Bar Chart: Growth Rates")
 fig_bar = go.Figure()
-fig_bar.add_trace(go.Bar(x=year_columns, y=ana23_growth, name="ANA23 Growth Rate"))
-fig_bar.add_trace(go.Bar(x=year_columns, y=current_growth, name="Current Growth Rate"))
-fig_bar.add_trace(go.Bar(x=year_columns, y=previous_growth, name="Previous Growth Rate"))
+fig_bar.add_trace(go.Bar(x=year_columns, y=ana23_growth_rates, name="ANA23 Growth Rate"))
+fig_bar.add_trace(go.Bar(x=year_columns, y=current_growth_rates, name="Current Growth Rate"))
+fig_bar.add_trace(go.Bar(x=year_columns, y=previous_growth_rates, name="Previous Growth Rate"))
 fig_bar.update_layout(title="Growth Rates Comparison", xaxis_title="Year", yaxis_title="Growth Rate (%)", barmode="group")
 st.plotly_chart(fig_bar)
