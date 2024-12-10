@@ -1,7 +1,3 @@
-
-
-
-
 import os
 import pandas as pd
 import streamlit as st
@@ -29,10 +25,6 @@ def get_single_file_from_directory(directory):
         st.stop()
     return os.path.join(directory, files[0])
 
-# Get the single file from ANA and Previous_Current directories
-ANA_PATH = get_single_file_from_directory(ANA_DIR)
-PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
-
 # Helper function to create 'full_name' column
 def create_full_name_column(df):
     df['full_name'] = df['Sector'].astype(str) + df['Transaction'].astype(str) + df['Industry'].astype(str) + df['Product'].astype(str)
@@ -52,10 +44,13 @@ def calculate_additional_columns(df, filter_years, largest_years, diff_years):
     df['largest_diff'] = df[diff_columns].apply(lambda x: pd.to_numeric(x, errors='coerce').abs().max(), axis=1)
     return df
 
-# Load datasets
-st.header("Data Loading")
-with st.spinner("Loading data..."):
-    # Input Curr Minus ANA23
+@st.cache_data(show_spinner=False)
+def load_all_data():
+    # Get file paths
+    ANA_PATH = get_single_file_from_directory(ANA_DIR)
+    PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
+
+    # Load Input Curr Minus ANA23
     Input_Curr_minus_ANA23 = pd.read_excel(ANA_PATH, sheet_name='Difference (A)')
     Input_Curr_minus_ANA23 = create_full_name_column(Input_Curr_minus_ANA23)
     Input_Curr_minus_ANA23['filter'] = Input_Curr_minus_ANA23.iloc[:, -3:-1].apply(lambda x: (x != 0).sum(), axis=1)
@@ -89,18 +84,146 @@ with st.spinner("Loading data..."):
     Current = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name='Post-Change (A)')
     Current = create_full_name_column(Current)
 
-    st.success("Data loaded successfully!")
+    return (Input_Curr_minus_ANA23, High_level_checks_ana23, Low_level_checks_ANA23,
+            Input_Curr_minus_previous, High_level_checks_Pre_day, low_level_checks_Pre_day,
+            ANA23, Previous, Current)
 
-# Define year ranges for calculations
-filter_years = list(range(1997, 2022))
-largest_years = list(range(1997, 2022))
-diff_years = [2020, 2021, 2022]
+@st.cache_data(show_spinner=False)
+def preprocess_loaded_data(Input_Curr_minus_ANA23, High_level_checks_ana23, Low_level_checks_ANA23,
+                           Input_Curr_minus_previous, High_level_checks_Pre_day, low_level_checks_Pre_day,
+                           ANA23, Previous, Current):
 
-# Perform calculations for additional columns
-High_level_checks_ana23 = calculate_additional_columns(High_level_checks_ana23, filter_years, largest_years, diff_years)
-Low_level_checks_ANA23 = calculate_additional_columns(Low_level_checks_ANA23, filter_years, largest_years, diff_years)
-High_level_checks_Pre_day = calculate_additional_columns(High_level_checks_Pre_day, filter_years, largest_years, diff_years)
-low_level_checks_Pre_day = calculate_additional_columns(low_level_checks_Pre_day, filter_years, largest_years, diff_years)
+    filter_years = list(range(1997, 2022))
+    largest_years = list(range(1997, 2022))
+    diff_years = [2020, 2021, 2022]
+
+    # Perform calculations for additional columns
+    High_level_checks_ana23 = calculate_additional_columns(High_level_checks_ana23, filter_years, largest_years, diff_years)
+    Low_level_checks_ANA23 = calculate_additional_columns(Low_level_checks_ANA23, filter_years, largest_years, diff_years)
+    High_level_checks_Pre_day = calculate_additional_columns(High_level_checks_Pre_day, filter_years, largest_years, diff_years)
+    low_level_checks_Pre_day = calculate_additional_columns(low_level_checks_Pre_day, filter_years, largest_years, diff_years)
+
+    return High_level_checks_ana23, Low_level_checks_ANA23, High_level_checks_Pre_day, low_level_checks_Pre_day
+
+@st.cache_data(show_spinner=False)
+def load_and_preprocess_datasets_for_plotting():
+    # Get file paths
+    ANA_PATH = get_single_file_from_directory(ANA_DIR)
+    PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
+
+    # Load datasets
+    ANA23 = pd.read_excel(ANA_PATH, sheet_name="Pre-Change (A)")
+    ANA23["Series"] = ANA23["Sector"].astype(str) + ANA23["Transaction"].astype(str) + ANA23["Industry"].astype(str) + ANA23["Product"].astype(str)
+    cols = ["Series"] + [col for col in ANA23.columns if col != "Series"]
+    ANA23 = ANA23[cols]
+
+    Current = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Post-Change (A)")
+    Current["Series"] = Current["Sector"].astype(str) + Current["Transaction"].astype(str) + Current["Industry"].astype(str) + Current["Product"].astype(str)
+    cols = ["Series"] + [col for col in Current.columns if col != "Series"]
+    Current = Current[cols]
+
+    Previous = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Pre-Change (A)")
+    Previous["Series"] = Previous["Sector"].astype(str) + Previous["Transaction"].astype(str) + Previous["Industry"].astype(str) + Previous["Product"].astype(str)
+    cols = ["Series"] + [col for col in Previous.columns if col != "Series"]
+    Previous = Previous[cols]
+
+    # Standardize column names
+    for df in [ANA23, Current, Previous]:
+        df.columns = df.columns.astype(str).str.strip()
+
+    year_columns = [col for col in ANA23.columns if col.isdigit()]
+
+    def clean_numeric_data(df, year_columns):
+        numeric_df = df.copy()
+        for col in year_columns:
+            numeric_df[col] = pd.to_numeric(numeric_df[col], errors="coerce").fillna(0)
+        return numeric_df
+
+    ANA23_numeric = clean_numeric_data(ANA23, year_columns)
+    Current_numeric = clean_numeric_data(Current, year_columns)
+    Previous_numeric = clean_numeric_data(Previous, year_columns)
+
+    def calculate_growth_rates(row, year_columns):
+        rates = []
+        for i in range(len(year_columns)):
+            if i == 0:
+                # Base year, no growth
+                rates.append(0)
+            else:
+                prev_val = row[year_columns[i - 1]]
+                curr_val = row[year_columns[i]]
+                if prev_val != 0:
+                    growth = ((curr_val - prev_val) / prev_val) * 100
+                else:
+                    growth = 0
+                rates.append(growth)
+        return rates
+
+    ANA23_growth_rates = ANA23_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
+    Current_growth_rates = Current_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
+    Previous_growth_rates = Previous_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
+
+    # Precompute all combinations for faster filtering
+    # Create a dictionary keyed by (Sector, Industry, Product, Transaction)
+    precomputed_data = {}
+    # We'll iterate once and store all filtered results
+    # This ensures that once user changes a filter, we do not recalculate on the fly
+    for idx, row in ANA23.iterrows():
+        key = (row["Sector"], row["Industry"], row["Product"], row["Transaction"])
+        # Filtered rows in each dataset
+        filtered_ANA23 = ANA23[(ANA23["Sector"] == key[0]) & (ANA23["Industry"] == key[1]) & (ANA23["Product"] == key[2]) & (ANA23["Transaction"] == key[3])]
+        filtered_Current = Current[(Current["Sector"] == key[0]) & (Current["Industry"] == key[1]) & (Current["Product"] == key[2]) & (Current["Transaction"] == key[3])]
+        filtered_Previous = Previous[(Previous["Sector"] == key[0]) & (Previous["Industry"] == key[1]) & (Previous["Product"] == key[2]) & (Previous["Transaction"] == key[3])]
+
+        if not filtered_ANA23.empty and not filtered_Current.empty and not filtered_Previous.empty:
+            filtered_index = filtered_ANA23.index[0]
+
+            filtered_ANA23_numeric = ANA23_numeric.loc[filtered_index, year_columns]
+            filtered_Current_numeric = Current_numeric.loc[filtered_index, year_columns]
+            filtered_Previous_numeric = Previous_numeric.loc[filtered_index, year_columns]
+
+            filtered_ANA23_growth = ANA23_growth_rates[filtered_index]
+            filtered_Current_growth = Current_growth_rates[filtered_index]
+            filtered_Previous_growth = Previous_growth_rates[filtered_index]
+
+            precomputed_data[key] = {
+                "ANA23": filtered_ANA23,
+                "Current": filtered_Current,
+                "Previous": filtered_Previous,
+                "ANA23_numeric": filtered_ANA23_numeric,
+                "Current_numeric": filtered_Current_numeric,
+                "Previous_numeric": filtered_Previous_numeric,
+                "ANA23_growth": filtered_ANA23_growth,
+                "Current_growth": filtered_Current_growth,
+                "Previous_growth": filtered_Previous_growth,
+                "year_columns": year_columns
+            }
+
+    return ANA23, Current, Previous, ANA23_numeric, Current_numeric, Previous_numeric, ANA23_growth_rates, Current_growth_rates, Previous_growth_rates, year_columns, precomputed_data
+
+
+st.header("Data Loading")
+with st.spinner("Loading data..."):
+    # Load all initial data
+    (Input_Curr_minus_ANA23, High_level_checks_ana23, Low_level_checks_ANA23,
+     Input_Curr_minus_previous, High_level_checks_Pre_day, low_level_checks_Pre_day,
+     ANA23, Previous, Current) = load_all_data()
+
+    # Preprocess checks
+    (High_level_checks_ana23, Low_level_checks_ANA23,
+     High_level_checks_Pre_day, low_level_checks_Pre_day) = preprocess_loaded_data(
+        Input_Curr_minus_ANA23, High_level_checks_ana23, Low_level_checks_ANA23,
+        Input_Curr_minus_previous, High_level_checks_Pre_day, low_level_checks_Pre_day,
+        ANA23, Previous, Current
+    )
+
+    # Now load and preprocess datasets for plotting and precomputing all combos
+    (ANA23_full, Current_full, Previous_full,
+     ANA23_numeric, Current_numeric, Previous_numeric,
+     ANA23_growth_rates, Current_growth_rates, Previous_growth_rates,
+     year_columns, precomputed_data) = load_and_preprocess_datasets_for_plotting()
+
+st.success("Data loaded and precomputed successfully!")
 
 # Display datasets
 st.header("Datasets")
@@ -123,116 +246,36 @@ st.dataframe(High_level_checks_Pre_day)
 st.subheader("Low Level Checks - Previous")
 st.dataframe(low_level_checks_Pre_day)
 
-
-
-
-# Function to load and preprocess datasets
-@st.cache_data(show_spinner=False)
-def load_and_preprocess_datasets():
-    # Get file paths
-    ANA_PATH = get_single_file_from_directory(ANA_DIR)
-    PREVIOUS_CURRENT_PATH = get_single_file_from_directory(PREVIOUS_CURRENT_DIR)
-
-    # Load datasets
-    ANA23 = pd.read_excel(ANA_PATH, sheet_name="Pre-Change (A)")
-    Current = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Post-Change (A)")
-    Previous = pd.read_excel(PREVIOUS_CURRENT_PATH, sheet_name="Pre-Change (A)")
-
-    # Create "Series" column for consistency
-    for df in [ANA23, Current, Previous]:
-        df["Series"] = df["Sector"].astype(str) + df["Transaction"].astype(str) + df["Industry"].astype(str) + df["Product"].astype(str)
-        cols = ["Series"] + [col for col in df.columns if col != "Series"]
-        df = df[cols]
-
-    # Standardize column names and identify year columns
-    for df in [ANA23, Current, Previous]:
-        df.columns = df.columns.astype(str).str.strip()
-    year_columns = [col for col in ANA23.columns if col.isdigit()]
-
-    # Precompute growth rates and numeric versions of datasets
-    def clean_numeric_data(df, year_columns):
-        numeric_df = df.copy()
-        for col in year_columns:
-            numeric_df[col] = pd.to_numeric(numeric_df[col], errors="coerce").fillna(0)
-        return numeric_df
-
-    ANA23_numeric = clean_numeric_data(ANA23, year_columns)
-    Current_numeric = clean_numeric_data(Current, year_columns)
-    Previous_numeric = clean_numeric_data(Previous, year_columns)
-
-    def calculate_growth_rates(df, year_columns):
-        growth_rates = []
-        for i in range(1, len(year_columns)):
-            previous = df[year_columns[i - 1]]
-            current = df[year_columns[i]]
-            growth = ((current - previous) / previous) * 100 if previous != 0 else 0
-            growth_rates.append(growth)
-        return [0] + growth_rates
-
-    ANA23_growth_rates = ANA23_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
-    Current_growth_rates = Current_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
-    Previous_growth_rates = Previous_numeric.apply(lambda row: calculate_growth_rates(row, year_columns), axis=1)
-
-    return ANA23, Current, Previous, year_columns, ANA23_numeric, Current_numeric, Previous_numeric, ANA23_growth_rates, Current_growth_rates, Previous_growth_rates
-
-# Load datasets once and cache results
-(
-    ANA23,
-    Current,
-    Previous,
-    year_columns,
-    ANA23_numeric,
-    Current_numeric,
-    Previous_numeric,
-    ANA23_growth_rates,
-    Current_growth_rates,
-    Previous_growth_rates,
-) = load_and_preprocess_datasets()
-
 # Sidebar filters
 st.sidebar.header("Filter Options")
-sector = st.sidebar.selectbox("Select Sector", ANA23["Sector"].unique())
-industry = st.sidebar.selectbox("Select Industry", ANA23["Industry"].unique())
-product = st.sidebar.selectbox("Select Product", ANA23["Product"].unique())
-transaction = st.sidebar.selectbox("Select Transaction", ANA23["Transaction"].unique())
+unique_sectors = ANA23["Sector"].unique()
+sector = st.sidebar.selectbox("Select Sector", unique_sectors)
+filtered_industries = ANA23[ANA23["Sector"] == sector]["Industry"].unique()
+industry = st.sidebar.selectbox("Select Industry", filtered_industries)
+filtered_products = ANA23[(ANA23["Sector"] == sector) & (ANA23["Industry"] == industry)]["Product"].unique()
+product = st.sidebar.selectbox("Select Product", filtered_products)
+filtered_transactions = ANA23[(ANA23["Sector"] == sector) & (ANA23["Industry"] == industry) & (ANA23["Product"] == product)]["Transaction"].unique()
+transaction = st.sidebar.selectbox("Select Transaction", filtered_transactions)
 
-# Filter datasets dynamically
-def filter_datasets(sector, industry, product, transaction):
-    filtered_ANA23 = ANA23[
-        (ANA23["Sector"] == sector)
-        & (ANA23["Industry"] == industry)
-        & (ANA23["Product"] == product)
-        & (ANA23["Transaction"] == transaction)
-    ]
-    filtered_Current = Current[
-        (Current["Sector"] == sector)
-        & (Current["Industry"] == industry)
-        & (Current["Product"] == product)
-        & (Current["Transaction"] == transaction)
-    ]
-    filtered_Previous = Previous[
-        (Previous["Sector"] == sector)
-        & (Previous["Industry"] == industry)
-        & (Previous["Product"] == product)
-        & (Previous["Transaction"] == transaction)
-    ]
-    return filtered_ANA23, filtered_Current, filtered_Previous
+key = (sector, industry, product, transaction)
 
-filtered_ANA23, filtered_Current, filtered_Previous = filter_datasets(sector, industry, product, transaction)
-
-if filtered_ANA23.empty or filtered_Current.empty or filtered_Previous.empty:
+if key not in precomputed_data:
     st.warning("No data available for the selected combination.")
     st.stop()
 
-# Extract numeric and growth rate data for filtered datasets
-filtered_index = filtered_ANA23.index[0]
-filtered_ANA23_numeric = ANA23_numeric.loc[filtered_index, year_columns]
-filtered_Current_numeric = Current_numeric.loc[filtered_index, year_columns]
-filtered_Previous_numeric = Previous_numeric.loc[filtered_index, year_columns]
+data = precomputed_data[key]
 
-filtered_ANA23_growth = ANA23_growth_rates[filtered_index]
-filtered_Current_growth = Current_growth_rates[filtered_index]
-filtered_Previous_growth = Previous_growth_rates[filtered_index]
+filtered_ANA23 = data["ANA23"]
+filtered_Current = data["Current"]
+filtered_Previous = data["Previous"]
+
+filtered_ANA23_numeric = data["ANA23_numeric"]
+filtered_Current_numeric = data["Current_numeric"]
+filtered_Previous_numeric = data["Previous_numeric"]
+
+filtered_ANA23_growth = data["ANA23_growth"]
+filtered_Current_growth = data["Current_growth"]
+filtered_Previous_growth = data["Previous_growth"]
 
 # Display filtered datasets
 st.subheader("Filtered Datasets")
@@ -246,17 +289,17 @@ st.dataframe(filtered_Previous)
 # Line Chart
 st.subheader("Line Chart: Yearly Comparison")
 fig_line = go.Figure()
-fig_line.add_trace(go.Scatter(x=year_columns, y=filtered_ANA23_numeric, mode="lines+markers", name="ANA23"))
-fig_line.add_trace(go.Scatter(x=year_columns, y=filtered_Current_numeric, mode="lines+markers", name="Current"))
-fig_line.add_trace(go.Scatter(x=year_columns, y=filtered_Previous_numeric, mode="lines+markers", name="Previous"))
+fig_line.add_trace(go.Scatter(x=data["year_columns"], y=filtered_ANA23_numeric, mode="lines+markers", name="ANA23"))
+fig_line.add_trace(go.Scatter(x=data["year_columns"], y=filtered_Current_numeric, mode="lines+markers", name="Current"))
+fig_line.add_trace(go.Scatter(x=data["year_columns"], y=filtered_Previous_numeric, mode="lines+markers", name="Previous"))
 fig_line.update_layout(title="Yearly Comparison for Levels", xaxis_title="Year", yaxis_title="Values")
 st.plotly_chart(fig_line)
 
 # Bar Chart for Growth Rates
 st.subheader("Bar Chart: Growth Rates")
 fig_bar = go.Figure()
-fig_bar.add_trace(go.Bar(x=year_columns, y=filtered_ANA23_growth, name="ANA23 Growth Rate"))
-fig_bar.add_trace(go.Bar(x=year_columns, y=filtered_Current_growth, name="Current Growth Rate"))
-fig_bar.add_trace(go.Bar(x=year_columns, y=filtered_Previous_growth, name="Previous Growth Rate"))
+fig_bar.add_trace(go.Bar(x=data["year_columns"], y=filtered_ANA23_growth, name="ANA23 Growth Rate"))
+fig_bar.add_trace(go.Bar(x=data["year_columns"], y=filtered_Current_growth, name="Current Growth Rate"))
+fig_bar.add_trace(go.Bar(x=data["year_columns"], y=filtered_Previous_growth, name="Previous Growth Rate"))
 fig_bar.update_layout(title="Growth Rates Comparison", xaxis_title="Year", yaxis_title="Growth Rate (%)", barmode="group")
 st.plotly_chart(fig_bar)
