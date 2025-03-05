@@ -1,14 +1,41 @@
-@echo off
+@echo on
+REM --------------
+REM Display the current directory of the .bat file:
+REM  %~dp0 expands to the drive and path of this .bat file
+REM --------------
+echo [DEBUG] The current batch file directory is: "%~dp0"
 
-REM ----------------------------------------
-REM 1) Activate the ERIC environment
-REM    "%~dp0" = directory of this .bat file
-REM    Then we append "ERIC\Scripts\activate.bat"
-REM ----------------------------------------
+REM --------------
+REM Show the path we will try to call for activate.bat
+REM --------------
+echo [DEBUG] Attempting to call: "%~dp0ERIC\Scripts\activate.bat"
+
+REM --------------
+REM Add a pause so you can see the message before calling
+REM --------------
+pause
+
+REM --------------
+REM Attempt to call activate.bat
+REM --------------
 call "%~dp0ERIC\Scripts\activate.bat"
 
-REM ----------------------------------------
-REM 2) Launch Jupyter Notebook on abc.ipynb
-REM    Again prefixing with "%~dp0"
-REM ----------------------------------------
+REM --------------
+REM Show the path for the notebook
+REM --------------
+echo [DEBUG] Attempting to open Jupyter Notebook: "%~dp0abc.ipynb"
+
+REM --------------
+REM Another pause before launching
+REM --------------
+pause
+
+REM --------------
+REM Launch Jupyter Notebook
+REM --------------
 jupyter notebook "%~dp0abc.ipynb"
+
+REM --------------
+REM Final pause so the window doesn't close immediately
+REM --------------
+pause
