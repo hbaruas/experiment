@@ -1,41 +1,79 @@
 @echo on
-REM --------------
-REM Display the current directory of the .bat file:
-REM  %~dp0 expands to the drive and path of this .bat file
-REM --------------
+
+REM --------------------------------------------------
+REM 1) Derive the path to the ERIC environment folder
+REM    %~dp0 = directory of this .bat file (with slash)
+REM --------------------------------------------------
+set "ENV_DIR=%~dp0ERIC"
 echo [DEBUG] The current batch file directory is: "%~dp0"
+echo [DEBUG] The ERIC environment directory is: "%ENV_DIR%"
 
-REM --------------
-REM Show the path we will try to call for activate.bat
-REM --------------
-echo [DEBUG] Attempting to call: "%~dp0ERIC\Scripts\activate.bat"
+REM --------------------------------------------------
+REM 2) If "ERIC\Scripts\activate.bat" does NOT exist,
+REM    create the virtual environment
+REM --------------------------------------------------
+if not exist "%ENV_DIR%\Scripts\activate.bat" (
+    echo [DEBUG] Environment does not exist. Creating a new environment...
+    python -m venv "%ENV_DIR%"
+    if errorlevel 1 (
+        echo [ERROR] Failed to create virtual environment!
+        exit /b 1
+    )
+) else (
+    echo [DEBUG] Environment folder found. Skipping creation...
+)
 
-REM --------------
-REM Add a pause so you can see the message before calling
-REM --------------
-pause
+REM --------------------------------------------------
+REM 3) Activate the environment
+REM --------------------------------------------------
+echo [DEBUG] Activating environment: "%ENV_DIR%\Scripts\activate.bat"
+call "%ENV_DIR%\Scripts\activate.bat"
 
-REM --------------
-REM Attempt to call activate.bat
-REM --------------
-call "%~dp0ERIC\Scripts\activate.bat"
+REM --------------------------------------------------
+REM 4) Check/install required libraries
+REM    For each library:
+REM      - "pip show <lib>" returns 0 if installed, non-zero if missing
+REM      - If missing, pip install it
+REM --------------------------------------------------
 
-REM --------------
-REM Show the path for the notebook
-REM --------------
-echo [DEBUG] Attempting to open Jupyter Notebook: "%~dp0abc.ipynb"
+echo [DEBUG] Checking if 'requests' is installed...
+pip show requests
+if errorlevel 1 (
+    echo [DEBUG] Installing 'requests'...
+    pip install requests
+    if errorlevel 1 (
+        echo [ERROR] Failed to install 'requests'
+        exit /b 1
+    )
+)
 
-REM --------------
-REM Another pause before launching
-REM --------------
-pause
+echo [DEBUG] Checking if 'pandas' is installed...
+pip show pandas
+if errorlevel 1 (
+    echo [DEBUG] Installing 'pandas'...
+    pip install pandas
+    if errorlevel 1 (
+        echo [ERROR] Failed to install 'pandas'
+        exit /b 1
+    )
+)
 
-REM --------------
-REM Launch Jupyter Notebook
-REM --------------
+echo [DEBUG] Checking if 'jupyter' is installed...
+pip show jupyter
+if errorlevel 1 (
+    echo [DEBUG] Installing 'jupyter'...
+    pip install jupyter
+    if errorlevel 1 (
+        echo [ERROR] Failed to install 'jupyter'
+        exit /b 1
+    )
+)
+
+REM --------------------------------------------------
+REM 5) Launch Jupyter Notebook for abc.ipynb
+REM --------------------------------------------------
+echo [DEBUG] Launching Jupyter Notebook: "%~dp0abc.ipynb"
 jupyter notebook "%~dp0abc.ipynb"
 
-REM --------------
-REM Final pause so the window doesn't close immediately
-REM --------------
-pause
+REM The batch file ends here. No 'pause' statements,
+REM so it won't halt the console after completion.
