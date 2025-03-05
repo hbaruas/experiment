@@ -1,0 +1,49 @@
+import itables
+from itables import show
+import itables.options as opt
+import pandas as pd
+
+# Sample DataFrame
+df = pd.DataFrame({
+    "Name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+    "City": ["New York", "Paris", "New York", "Berlin", "Paris"],
+    "Score": [90, 85, 95, 80, 70]
+})
+
+###############################################################################
+# 1) Ensure headers are included in the exports.
+#    We do this by configuring the DataTables buttons with "exportOptions".
+#
+# 2) Enable "column_filters='header'" (or 'footer') to add a search box on each
+#    column, giving an AND-combination of filters across columns.
+###############################################################################
+
+# -- Configure the DOM and DataTables' export buttons:
+opt.dom = "Bfrtip"  # B=Buttons, f=filter, r=processing display, t=table, i=info, p=paging
+opt.buttons = [
+    {
+        "extend": "copyHtml5",
+        "exportOptions": {"columns": ":visible"}
+    },
+    {
+        "extend": "csvHtml5",
+        "exportOptions": {"columns": ":visible"}
+    },
+    {
+        "extend": "excelHtml5",
+        "exportOptions": {"columns": ":visible"}
+    },
+    {
+        "extend": "pdfHtml5",
+        "exportOptions": {"columns": ":visible"}
+    },
+    "print"
+]
+
+# -- Show the DataFrame in an interactive table:
+show(
+    df,
+    column_filters="header",       # add a filter box at the top of each column
+    scrollX=True,                  # horizontal scroll if needed
+    paging=True                    # enable paging
+)
