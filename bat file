@@ -1,64 +1,63 @@
 @echo on
 
 REM -------------------------------------------------
-REM 0) Usage check
+REM 0) Check for command-line argument: 3_8, 3_10, 3_12, etc.
 REM -------------------------------------------------
 if "%~1"=="" (
-    echo Usage: %~nx0 {3_8|3_10|3_12}
+    echo [ERROR] You did not specify which Python version to use.
+    echo [INFO]  Usage: %~nx0 {3_8|3_10|3_12}
     pause
-    exit /b 1
+    goto end
 )
 
-REM -------------------------------------------------
-REM 1) Set up folder paths based on the parameter
-REM -------------------------------------------------
 set "PY_VERSION=%~1"
 
-REM Adjust this root to match your system path:
+REM -------------------------------------------------
+REM 1) Define the base Python folder and environment name
+REM    (Adjust this root path as needed!)
+REM -------------------------------------------------
 set "PYTHON_ROOT=C:\ONSapps\My_python"
-
-REM We'll name our environment "ERIC"
 set "ENV_NAME=ERIC"
 
-REM Compose the path to the python.exe and the venv folder
+REM Build full paths
 set "PYTHON_EXE=%PYTHON_ROOT%\Python_%PY_VERSION%\python.exe"
 set "ENV_DIR=%PYTHON_ROOT%\Python_%PY_VERSION%\venv\%ENV_NAME%"
 
+echo [DEBUG] Using Python version: %PY_VERSION%
 echo [DEBUG] PYTHON_EXE=%PYTHON_EXE%
 echo [DEBUG] ENV_DIR  =%ENV_DIR%
 pause
 
 REM -------------------------------------------------
-REM 2) If environment is missing, create it
+REM 2) Create virtual environment if missing
 REM -------------------------------------------------
 if not exist "%ENV_DIR%\Scripts\activate.bat" (
-    echo [DEBUG] Environment does not exist. Creating a new environment in:
-    echo         %ENV_DIR%
+    echo [DEBUG] Environment does not exist. Creating it...
     "%PYTHON_EXE%" -m venv "%ENV_DIR%"
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment!
         pause
-        exit /b 1
+        goto end
     )
 ) else (
-    echo [DEBUG] Found existing environment in %ENV_DIR%. Skipping creation.
+    echo [DEBUG] Found existing environment at %ENV_DIR%. Skipping creation...
 )
 pause
 
 REM -------------------------------------------------
 REM 3) Activate the environment
 REM -------------------------------------------------
-echo [DEBUG] Activating environment...
+echo [DEBUG] Activating the environment...
 call "%ENV_DIR%\Scripts\activate.bat"
 
-echo [DEBUG] Running where python to confirm...
+echo [DEBUG] Let's confirm which Python is now active:
 where python
 python --version
 pause
 
 REM -------------------------------------------------
-REM 4) Check/install required libraries
-REM    (Add or remove libraries as needed)
+REM 4) Check/install libraries if missing
+REM    (Adjust or add libraries as needed.)
 REM -------------------------------------------------
 set "LIBS=requests pandas jupyter"
 
@@ -71,25 +70,28 @@ for %%L in (%LIBS%) do (
         if errorlevel 1 (
             echo [ERROR] Failed to install %%L
             pause
-            exit /b 1
+            goto end
         )
     ) else (
         echo [DEBUG] %%L is already installed, skipping...
     )
 )
 
-echo [DEBUG] Library checks complete.
+echo [DEBUG] All libraries are confirmed or installed.
 pause
 
 REM -------------------------------------------------
-REM 5) Launch Jupyter Notebook for abc.ipynb
-REM    (Assume abc.ipynb is in the same folder as this .bat)
+REM 5) Launch Jupyter Notebook (abc.ipynb)
+REM    Assuming abc.ipynb is in the same folder as this script
+REM    (%~dp0 => directory of this .bat file)
 REM -------------------------------------------------
 echo [DEBUG] Launching Jupyter Notebook: "%~dp0abc.ipynb"
 jupyter notebook "%~dp0abc.ipynb"
 
 REM -------------------------------------------------
-REM 6) Final pause so you can see any last messages
+REM 6) Final section. We'll use "cmd /k" so the window
+REM    remains open after the script ends.
 REM -------------------------------------------------
-echo [DEBUG] Done. Press any key to close...
-pause
+:end
+echo [DEBUG] Script completed. Keeping window open...
+cmd /k
