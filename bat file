@@ -1,79 +1,67 @@
 @echo on
 
-REM --------------------------------------------------
-REM 1) Derive the path to the ERIC environment folder
-REM    %~dp0 = directory of this .bat file (with slash)
-REM --------------------------------------------------
-set "ENV_DIR=%~dp0ERIC"
-echo [DEBUG] The current batch file directory is: "%~dp0"
-echo [DEBUG] The ERIC environment directory is: "%ENV_DIR%"
+REM ----------------------------------------------
+REM 1) Check arguments: 
+REM    e.g. create_env.bat 3_8 or 3_10 or 3_12
+REM ----------------------------------------------
+if "%~1"=="" (
+    echo Usage: %~nx0 {3_8|3_10|3_12}
+    exit /b 1
+)
 
-REM --------------------------------------------------
-REM 2) If "ERIC\Scripts\activate.bat" does NOT exist,
-REM    create the virtual environment
-REM --------------------------------------------------
+set "PY_VERSION=%~1"
+set "PYTHON_ROOT=C:\ONSapps\My_python"
+set "ENV_NAME=ERIC"
+
+REM ----------------------------------------------
+REM 2) Set the chosen Python.exe path
+REM ----------------------------------------------
+set "PYTHON_EXE=%PYTHON_ROOT%\Python_%PY_VERSION%\python.exe"
+set "ENV_DIR=%PYTHON_ROOT%\Python_%PY_VERSION%\venv\%ENV_NAME%"
+
+echo [DEBUG] PYTHON_EXE=%PYTHON_EXE%
+echo [DEBUG] ENV_DIR  =%ENV_DIR%
+
+REM ----------------------------------------------
+REM 3) Create environment if missing
+REM ----------------------------------------------
 if not exist "%ENV_DIR%\Scripts\activate.bat" (
-    echo [DEBUG] Environment does not exist. Creating a new environment...
-    python -m venv "%ENV_DIR%"
+    echo [DEBUG] Creating environment in "%ENV_DIR%"
+    "%PYTHON_EXE%" -m venv "%ENV_DIR%"
     if errorlevel 1 (
         echo [ERROR] Failed to create virtual environment!
         exit /b 1
     )
 ) else (
-    echo [DEBUG] Environment folder found. Skipping creation...
+    echo [DEBUG] Found existing environment in "%ENV_DIR%". Skipping creation.
 )
 
-REM --------------------------------------------------
-REM 3) Activate the environment
-REM --------------------------------------------------
-echo [DEBUG] Activating environment: "%ENV_DIR%\Scripts\activate.bat"
+REM ----------------------------------------------
+REM 4) Activate the environment
+REM ----------------------------------------------
 call "%ENV_DIR%\Scripts\activate.bat"
 
-REM --------------------------------------------------
-REM 4) Check/install required libraries
-REM    For each library:
-REM      - "pip show <lib>" returns 0 if installed, non-zero if missing
-REM      - If missing, pip install it
-REM --------------------------------------------------
+REM ----------------------------------------------
+REM 5) Libraries to check (space-separated)
+REM ----------------------------------------------
+set "LIBS=requests pandas jupyter"
 
-echo [DEBUG] Checking if 'requests' is installed...
-pip show requests
-if errorlevel 1 (
-    echo [DEBUG] Installing 'requests'...
-    pip install requests
+for %%L in (%LIBS%) do (
+    pip show %%L >nul 2>&1
     if errorlevel 1 (
-        echo [ERROR] Failed to install 'requests'
-        exit /b 1
+        echo [DEBUG] Installing %%L...
+        pip install %%L
+        if errorlevel 1 (
+            echo [ERROR] Failed to install %%L
+            exit /b 1
+        )
+    ) else (
+        echo [DEBUG] %%L already installed
     )
 )
 
-echo [DEBUG] Checking if 'pandas' is installed...
-pip show pandas
-if errorlevel 1 (
-    echo [DEBUG] Installing 'pandas'...
-    pip install pandas
-    if errorlevel 1 (
-        echo [ERROR] Failed to install 'pandas'
-        exit /b 1
-    )
-)
-
-echo [DEBUG] Checking if 'jupyter' is installed...
-pip show jupyter
-if errorlevel 1 (
-    echo [DEBUG] Installing 'jupyter'...
-    pip install jupyter
-    if errorlevel 1 (
-        echo [ERROR] Failed to install 'jupyter'
-        exit /b 1
-    )
-)
-
-REM --------------------------------------------------
-REM 5) Launch Jupyter Notebook for abc.ipynb
-REM --------------------------------------------------
-echo [DEBUG] Launching Jupyter Notebook: "%~dp0abc.ipynb"
+REM ----------------------------------------------
+REM 6) Launch the notebook
+REM    Assume it's in the same folder as this .bat
+REM ----------------------------------------------
 jupyter notebook "%~dp0abc.ipynb"
-
-REM The batch file ends here. No 'pause' statements,
-REM so it won't halt the console after completion.
