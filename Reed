@@ -3,80 +3,95 @@ import pandas as pd
 from tqdm import tqdm
 import time
 import urllib3
+import os
 
-# Suppress SSL warnings
+# ✅ Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ✅ REPLACE THIS with your actual Reed API key
+# ✅ Your REED API Key here
 API_KEY = 'YOUR_API_KEY_HERE'
 
 # Constants
 BASE_URL = 'https://www.reed.co.uk/api/1.0/search'
-TARGET_JOBS = 5000
 PAGE_SIZE = 25
+MAX_EMPTY_RESPONSES = 5  # stop after multiple empty pages
 
-# Storage
+# Output files
+FINAL_FILE = 'reed_jobs_uk_extended.csv'
+PARTIAL_FILE = 'reed_jobs_partial.csv'
+
+# Resumable storage
 all_jobs = []
 page = 1
+empty_page_count = 0
 
-# Progress bar setup
-progress = tqdm(total=TARGET_JOBS, desc='Fetching Jobs', ncols=100)
+print("🔄 Starting job scraping...")
 
-while len(all_jobs) < TARGET_JOBS:
-    params = {
-        'resultsToTake': PAGE_SIZE,
-        'resultsToSkip': (page - 1) * PAGE_SIZE
-    }
+# Create progress bar without knowing total jobs ahead of time
+progress = tqdm(desc='Fetching Jobs', ncols=100)
 
-    try:
+try:
+    while True:
+        params = {
+            'resultsToTake': PAGE_SIZE,
+            'resultsToSkip': (page - 1) * PAGE_SIZE
+        }
+
         response = requests.get(
             BASE_URL,
             headers={'Accept': 'application/json'},
             auth=(API_KEY, ''),
             params=params,
-            verify=False  # SSL cert verification OFF
+            verify=False
         )
-    except Exception as e:
-        print(f"❌ Request failed: {e}")
-        break
 
-    if response.status_code != 200:
-        print(f"❌ Error {response.status_code}: {response.text}")
-        break
+        if response.status_code != 200:
+            print(f"❌ Error {response.status_code}: {response.text}")
+            break
 
-    jobs = response.json().get('results', [])
-    if not jobs:
-        print("⚠️ No more jobs returned by the API.")
-        break
+        jobs = response.json().get('results', [])
 
-    for job in jobs:
-        job_id = job.get('jobId')
-        title = job.get('jobTitle')
-        description = job.get('jobDescription')
-
-        if job_id and title and description:
-            all_jobs.append({
-                'job_id': job_id,
-                'title': title,
-                'description': description,
-                'location': job.get('locationName'),
-                'employer': job.get('employerName'),
-                'salary_min': job.get('minimumSalary'),
-                'salary_max': job.get('maximumSalary'),
-                'currency': job.get('currency'),
-                'date_posted': job.get('datePosted'),
-                'url': job.get('jobUrl')
-            })
-            progress.update(1)
-            if len(all_jobs) >= TARGET_JOBS:
+        if not jobs:
+            empty_page_count += 1
+            print(f"⚠️ Empty page #{empty_page_count} (Page {page})")
+            if empty_page_count >= MAX_EMPTY_RESPONSES:
+                print("⛔ Too many empty pages, assuming end of data.")
                 break
+        else:
+            empty_page_count = 0  # Reset counter on success
 
-    page += 1
-    time.sleep(0.5)  # Be kind to the server
+        for job in jobs:
+            job_id = job.get('jobId')
+            title = job.get('jobTitle')
+            description = job.get('jobDescription')
 
-progress.close()
+            if job_id and title and description:
+                all_jobs.append({
+                    'job_id': job_id,
+                    'title': title,
+                    'description': description,
+                    'location': job.get('locationName'),
+                    'employer': job.get('employerName'),
+                    'salary_min': job.get('minimumSalary'),
+                    'salary_max': job.get('maximumSalary'),
+                    'currency': job.get('currency'),
+                    'date_posted': job.get('datePosted'),
+                    'url': job.get('jobUrl')
+                })
+                progress.update(1)
 
-# Save to CSV
-df = pd.DataFrame(all_jobs)
-df.to_csv('reed_jobs_uk_extended.csv', index=False)
-print(f"\n✅ Finished! {len(df)} jobs saved to 'reed_jobs_uk_extended.csv'")
+        # Save progress after every page
+        pd.DataFrame(all_jobs).to_csv(PARTIAL_FILE, index=False)
+
+        page += 1
+        time.sleep(0.5)
+
+except Exception as e:
+    print(f"\n⚠️ Script failed with error: {e}")
+    print("💾 Saving partial progress...")
+
+finally:
+    progress.close()
+    pd.DataFrame(all_jobs).to_csv(FINAL_FILE, index=False)
+    print(f"\n✅ Finished. Total jobs scraped: {len(all_jobs)}")
+    print(f"📄 Final saved to: {FINAL_FILE}")
