@@ -2,29 +2,18 @@ import requests
 import pandas as pd
 from tqdm import tqdm
 import time
+import certifi
 
 # YOUR REED API KEY HERE
 API_KEY = 'YOUR_API_KEY_HERE'
 
-# Base URL for Reed Job Search API
 BASE_URL = 'https://www.reed.co.uk/api/1.0/search'
-
-# Headers with basic authentication
-HEADERS = {
-    'Accept': 'application/json',
-}
-
-# Number of jobs needed
 TARGET_JOBS = 5000
-
-# Maximum jobs per page (25 is Reed's max limit)
 PAGE_SIZE = 25
 
-# Storage
 all_jobs = []
 page = 1
-
-print("Fetching jobs...")
+progress = tqdm(total=TARGET_JOBS, desc='Fetching Jobs', ncols=100)
 
 while len(all_jobs) < TARGET_JOBS:
     params = {
@@ -32,38 +21,54 @@ while len(all_jobs) < TARGET_JOBS:
         'resultsToSkip': (page - 1) * PAGE_SIZE
     }
 
-    response = requests.get(BASE_URL, headers=HEADERS, auth=(API_KEY, ''), params=params)
+    try:
+        response = requests.get(
+            BASE_URL,
+            headers={'Accept': 'application/json'},
+            auth=(API_KEY, ''),
+            params=params,
+            verify=certifi.where()
+        )
+    except Exception as e:
+        print(f"Request failed: {e}")
+        break
 
     if response.status_code != 200:
         print(f"Error {response.status_code}: {response.text}")
         break
 
-    data = response.json()
-    jobs = data.get('results', [])
-
+    jobs = response.json().get('results', [])
     if not jobs:
-        print("No more jobs returned. End of dataset.")
+        print("No more jobs returned.")
         break
 
     for job in jobs:
         job_id = job.get('jobId')
         title = job.get('jobTitle')
-        desc = job.get('jobDescription')
-        if job_id and title and desc:
+        description = job.get('jobDescription')
+
+        if job_id and title and description:
             all_jobs.append({
                 'job_id': job_id,
                 'title': title,
-                'description': desc
+                'description': description,
+                'location': job.get('locationName'),
+                'employer': job.get('employerName'),
+                'salary_min': job.get('minimumSalary'),
+                'salary_max': job.get('maximumSalary'),
+                'currency': job.get('currency'),
+                'date_posted': job.get('datePosted'),
+                'url': job.get('jobUrl')
             })
+            progress.update(1)
+            if len(all_jobs) >= TARGET_JOBS:
+                break
 
     page += 1
-    time.sleep(0.5)  # Respectful delay to avoid hitting rate limits
+    time.sleep(0.5)
 
-    if len(all_jobs) >= TARGET_JOBS:
-        print(f"Reached {len(all_jobs)} jobs.")
-        break
+progress.close()
 
-# Save to CSV
 df = pd.DataFrame(all_jobs)
-df.to_csv('reed_jobs_uk.csv', index=False)
-print(f"Saved {len(df)} jobs to 'reed_jobs_uk.csv'")
+df.to_csv('reed_jobs_uk_extended.csv', index=False)
+print(f"\n✅ Saved {len(df)} jobs with extra details to 'reed_jobs_uk_extended.csv'")
