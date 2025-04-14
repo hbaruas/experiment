@@ -2,17 +2,24 @@ import requests
 import pandas as pd
 from tqdm import tqdm
 import time
-import certifi
+import urllib3
 
-# YOUR REED API KEY HERE
+# Suppress SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ✅ REPLACE THIS with your actual Reed API key
 API_KEY = 'YOUR_API_KEY_HERE'
 
+# Constants
 BASE_URL = 'https://www.reed.co.uk/api/1.0/search'
 TARGET_JOBS = 5000
 PAGE_SIZE = 25
 
+# Storage
 all_jobs = []
 page = 1
+
+# Progress bar setup
 progress = tqdm(total=TARGET_JOBS, desc='Fetching Jobs', ncols=100)
 
 while len(all_jobs) < TARGET_JOBS:
@@ -27,19 +34,19 @@ while len(all_jobs) < TARGET_JOBS:
             headers={'Accept': 'application/json'},
             auth=(API_KEY, ''),
             params=params,
-            verify=certifi.where()
+            verify=False  # SSL cert verification OFF
         )
     except Exception as e:
-        print(f"Request failed: {e}")
+        print(f"❌ Request failed: {e}")
         break
 
     if response.status_code != 200:
-        print(f"Error {response.status_code}: {response.text}")
+        print(f"❌ Error {response.status_code}: {response.text}")
         break
 
     jobs = response.json().get('results', [])
     if not jobs:
-        print("No more jobs returned.")
+        print("⚠️ No more jobs returned by the API.")
         break
 
     for job in jobs:
@@ -65,10 +72,11 @@ while len(all_jobs) < TARGET_JOBS:
                 break
 
     page += 1
-    time.sleep(0.5)
+    time.sleep(0.5)  # Be kind to the server
 
 progress.close()
 
+# Save to CSV
 df = pd.DataFrame(all_jobs)
 df.to_csv('reed_jobs_uk_extended.csv', index=False)
-print(f"\n✅ Saved {len(df)} jobs with extra details to 'reed_jobs_uk_extended.csv'")
+print(f"\n✅ Finished! {len(df)} jobs saved to 'reed_jobs_uk_extended.csv'")
