@@ -1,0 +1,69 @@
+import requests
+import pandas as pd
+from tqdm import tqdm
+import time
+
+# YOUR REED API KEY HERE
+API_KEY = 'YOUR_API_KEY_HERE'
+
+# Base URL for Reed Job Search API
+BASE_URL = 'https://www.reed.co.uk/api/1.0/search'
+
+# Headers with basic authentication
+HEADERS = {
+    'Accept': 'application/json',
+}
+
+# Number of jobs needed
+TARGET_JOBS = 5000
+
+# Maximum jobs per page (25 is Reed's max limit)
+PAGE_SIZE = 25
+
+# Storage
+all_jobs = []
+page = 1
+
+print("Fetching jobs...")
+
+while len(all_jobs) < TARGET_JOBS:
+    params = {
+        'resultsToTake': PAGE_SIZE,
+        'resultsToSkip': (page - 1) * PAGE_SIZE
+    }
+
+    response = requests.get(BASE_URL, headers=HEADERS, auth=(API_KEY, ''), params=params)
+
+    if response.status_code != 200:
+        print(f"Error {response.status_code}: {response.text}")
+        break
+
+    data = response.json()
+    jobs = data.get('results', [])
+
+    if not jobs:
+        print("No more jobs returned. End of dataset.")
+        break
+
+    for job in jobs:
+        job_id = job.get('jobId')
+        title = job.get('jobTitle')
+        desc = job.get('jobDescription')
+        if job_id and title and desc:
+            all_jobs.append({
+                'job_id': job_id,
+                'title': title,
+                'description': desc
+            })
+
+    page += 1
+    time.sleep(0.5)  # Respectful delay to avoid hitting rate limits
+
+    if len(all_jobs) >= TARGET_JOBS:
+        print(f"Reached {len(all_jobs)} jobs.")
+        break
+
+# Save to CSV
+df = pd.DataFrame(all_jobs)
+df.to_csv('reed_jobs_uk.csv', index=False)
+print(f"Saved {len(df)} jobs to 'reed_jobs_uk.csv'")
