@@ -1,0 +1,48 @@
+import pandas as pd
+import numpy as np
+import random
+
+# --- Load the reduced dataset ---
+df = pd.read_csv("reducedFile_2022.csv")
+
+# --- Step 1: Generate 100 Fake SOC Codes ---
+fake_soc_codes = [f"{random.randint(1, 9)}{random.randint(0, 9)}{random.randint(0, 9)}{random.randint(0, 9)}" for _ in range(100)]
+fake_soc_codes = list(set(fake_soc_codes))[:100]
+
+# --- Step 2: Randomly Assign SOC Code to Each Job ID ---
+job_ids = df["job_id"].unique()
+job_id_to_soc = {job_id: random.choice(fake_soc_codes) for job_id in job_ids}
+df["soc_code"] = df["job_id"].map(job_id_to_soc)
+
+# --- Step 3: Define Fake Landmark Occupation SOC Codes ---
+landmark_occupations = {
+    "data_entry": ["4112", "4121"],
+    "database": ["2136", "2137"],
+    "data_analytics": ["2425", "2426"]
+}
+
+# --- Step 4: Check if soc_code is in any landmark list ---
+def get_landmark_flag(soc):
+    for group in landmark_occupations.values():
+        if soc in group:
+            return True
+    return False
+
+df["landmark_flag"] = df["soc_code"].apply(get_landmark_flag)
+
+# --- Step 5: Calculate Dispersion Score per Noun Chunk ---
+dispersion_df = df.groupby("noun_chunk").agg({
+    "soc_code": pd.Series.nunique,
+    "job_id": "count"
+}).rename(columns={
+    "soc_code": "soc_diversity",
+    "job_id": "total_mentions"
+})
+dispersion_df["dispersion_score"] = dispersion_df["soc_diversity"] / dispersion_df["total_mentions"]
+
+# --- Merge dispersion back into the main DataFrame ---
+df = df.merge(dispersion_df[["dispersion_score"]], on="noun_chunk", how="left")
+
+# --- Save the enriched dataset ---
+df.to_csv("enriched_reducedFile_2022.csv", index=False)
+print("✅ Enriched dataset saved as 'enriched_reducedFile_2022.csv'. Ready for nuanced classification.")
