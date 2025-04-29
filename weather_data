@@ -33,3 +33,21 @@ print(f"✅ CSV saved to: {output_csv}")
 
 
 #https://www.metoffice.gov.uk/research/climate/maps-and-data/historic-station-data
+
+
+	•	Collaborating with other teams in the division:
+	•	Built an MVP using natural language processing to understand and quantify the role of data in the UK job market.
+	•	Port Data Project:
+	•	Publishing ship counts at major UK ports.
+	•	Exploring further analysis on free ports to assess their economic impact.
+	•	Land Mobility Data:
+	•	Reviving work on land mobility using traffic camera data in collaboration with RDSA.
+	•	Weather and Consumer Behaviour:
+	•	Analysing Met Office and CEDA data to study the effect of extreme weather on:
+	•	Retail footfall.
+	•	Consumer behaviours (e.g. electricity payment failures, weather-linked patterns).
+	•	VAT Flash Estimates:
+	•	Partnering with Data Science Campus to convert the 7-day VAT flash estimate diffusion index into a numerical index.
+	•	Nearing publication as part of the monthly release.
+
+
