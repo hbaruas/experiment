@@ -1,0 +1,35 @@
+import pandas as pd
+import re
+
+file_path = "/Users/saurabhkumar/Desktop/armaghdata.txt"
+output_csv = "/Users/saurabhkumar/Desktop/armaghdata.csv"
+
+clean_rows = []
+
+with open(file_path, "r") as f:
+    for line in f:
+        # Keep only lines that start with a year
+
+        if re.match(r"^\s*\d{4}", line):  # starts with year
+            line = line.strip()
+            parts = re.split(r'\s+', line)
+
+            if len(parts) >= 7:
+                # Optional: REMOVE footnotes like * or # or trailing text
+                # -----------------------------------------
+                #Uncomment the following block to clean footnotes:
+                for i in range(2, 7):  # only clean columns tmax to sun
+                    parts[i] = re.sub(r"[#*]", "", parts[i])
+                if len(parts) > 7:  # If extra notes like "Provisional" exist
+                    parts = parts[:7]
+                # -----------------------------------------
+
+                clean_rows.append(parts[:7])
+
+df = pd.DataFrame(clean_rows, columns=["year", "month", "tmax", "tmin", "af", "rain", "sun"])
+df.to_csv(output_csv, index=False)
+
+print(f"✅ CSV saved to: {output_csv}")
+
+
+#https://www.metoffice.gov.uk/research/climate/maps-and-data/historic-station-data
