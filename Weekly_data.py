@@ -1,58 +1,51 @@
-from datetime import datetime, timedelta
-from pyspark.sql import functions as F
+from pyspark.sql.functions import col, count, date_format, date_trunc, lit
+import re
 
 def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
     """
-    Returns count of new ads in each week between date_from and date_to.
-    
-    Parameters:
-    groupByVariableList : list of column names to group by
-    Textkernel_df : spark dataframe with job ads
-    date_from : string, 'YYYY-MM-DD'
-    date_to : string, 'YYYY-MM-DD'
-    
-    Returns:
-    Spark DataFrame with weekly job counts, grouped and pivoted.
-    """
-    # Ensure the date range is valid
-    start_date = datetime.strptime(date_from, '%Y-%m-%d')
-    end_date = datetime.strptime(date_to, '%Y-%m-%d')
-    
-    # Generate list of ISO week labels
-    expected_weeks = []
-    current_date = start_date
-    while current_date <= end_date:
-        iso_year, iso_week, _ = current_date.isocalendar()
-        week_label = f"{iso_year}-{iso_week:02d}"
-        if week_label not in expected_weeks:
-            expected_weeks.append(week_label)
-        current_date += timedelta(days=7)  # jump by week
+    Returns count of new ads in each week, grouped by specified variables.
 
-    # Create week label column
-    Textkernel_df = Textkernel_df.withColumn(
-        "week_label",
-        F.date_format(F.col("week_start_date"), "yyyy-ww")
+    Parameters:
+    - groupByVariableList: list of grouping column names
+    - Textkernel_df: input Spark DataFrame
+    - date_from: string, starting date in 'YYYY-MM-DD'
+    - date_to: string, ending date in 'YYYY-MM-DD'
+
+    Returns:
+    - Spark DataFrame with weekly new ads grouped by specified variables
+    """
+    # Validate dates
+    if not re.match(r"\d{4}-\d{2}-\d{2}", date_from) or not re.match(r"\d{4}-\d{2}-\d{2}", date_to):
+        raise ValueError("Date format must be YYYY-MM-DD")
+
+    # Filter date range
+    Textkernel_df = Textkernel_df.filter((col("date") >= lit(date_from)) & (col("date") <= lit(date_to)))
+
+    # Add a week label using ISO week logic compatible with Spark 3
+    Textkernel_df = Textkernel_df.withColumn("week_label", date_format(date_trunc("week", col("date")), "yyyy-ww"))
+
+    # Create ordered list of weeks
+    Dates = (
+        Textkernel_df
+        .select("week_label")
+        .dropDuplicates()
+        .sort("week_label")
+        .rdd.flatMap(lambda x: x)
+        .collect()
     )
 
-    # Group and pivot
-    if type(groupByVariableList) == list:
-        Dates = groupByVariableList + ["week_label"]
+    # Group and pivot the data
+    if isinstance(groupByVariableList, list):
         Textkernel_df = (
             Textkernel_df
             .groupBy(groupByVariableList + ["week_label"])
-            .agg(F.count("job_id").alias("count"))
+            .agg(count("job_id").alias("count"))
             .groupBy(groupByVariableList)
-            .pivot("week_label", expected_weeks)
-            .agg(F.first("count"))
+            .pivot("week_label", Dates)
+            .sum("count")
         )
 
-        # Fill any missing columns with 0
-        for week in expected_weeks:
-            if week not in Textkernel_df.columns:
-                Textkernel_df = Textkernel_df.withColumn(week, F.lit(0))
-
-        # Reorder columns to match expected list
-        final_cols = groupByVariableList + expected_weeks
-        Textkernel_df = Textkernel_df.select(final_cols)
+    # Ensure final DataFrame has ordered columns
+    Textkernel_df = Textkernel_df.select(groupByVariableList + Dates)
 
     return Textkernel_df
