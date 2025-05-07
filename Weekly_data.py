@@ -1,54 +1,58 @@
-import re
-from pyspark.sql.functions import col, weekofyear, year, lpad, concat_ws, date_trunc, count
+from datetime import datetime, timedelta
+from pyspark.sql import functions as F
 
 def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
     """
-    Returns count of new ads in calendar weeks across the reporting period.
-
+    Returns count of new ads in each week between date_from and date_to.
+    
     Parameters:
-    - groupByVariableList: list of variables to group by
-    - Textkernel_df: Spark DataFrame containing job adverts with a 'date' column
-    - date_from: string (YYYY-MM-DD), start date (inclusive)
-    - date_to: string (YYYY-MM-DD), end date (inclusive)
-
+    groupByVariableList : list of column names to group by
+    Textkernel_df : spark dataframe with job ads
+    date_from : string, 'YYYY-MM-DD'
+    date_to : string, 'YYYY-MM-DD'
+    
     Returns:
-    - Textkernel_df: Spark DataFrame pivoted to show counts of new ads by week
+    Spark DataFrame with weekly job counts, grouped and pivoted.
     """
+    # Ensure the date range is valid
+    start_date = datetime.strptime(date_from, '%Y-%m-%d')
+    end_date = datetime.strptime(date_to, '%Y-%m-%d')
+    
+    # Generate list of ISO week labels
+    expected_weeks = []
+    current_date = start_date
+    while current_date <= end_date:
+        iso_year, iso_week, _ = current_date.isocalendar()
+        week_label = f"{iso_year}-{iso_week:02d}"
+        if week_label not in expected_weeks:
+            expected_weeks.append(week_label)
+        current_date += timedelta(days=7)  # jump by week
 
-    # Validate date format
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from) or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_to):
-        raise ValueError("Dates must be in YYYY-MM-DD format")
+    # Create week label column
+    Textkernel_df = Textkernel_df.withColumn(
+        "week_label",
+        F.date_format(F.col("week_start_date"), "yyyy-ww")
+    )
 
-    # Filter data within range
-    Textkernel_df = Textkernel_df.filter(col("date").between(date_from, date_to))
+    # Group and pivot
+    if type(groupByVariableList) == list:
+        Dates = groupByVariableList + ["week_label"]
+        Textkernel_df = (
+            Textkernel_df
+            .groupBy(groupByVariableList + ["week_label"])
+            .agg(F.count("job_id").alias("count"))
+            .groupBy(groupByVariableList)
+            .pivot("week_label", expected_weeks)
+            .agg(F.first("count"))
+        )
 
-    # Generate weekly label and week start date
-    Textkernel_df = Textkernel_df \
-        .withColumn("week_number", lpad(weekofyear(col("date")).cast("string"), 2, "0")) \
-        .withColumn("year_week_label", concat_ws("-", year(col("date")), col("week_number"))) \
-        .withColumn("week_start_date", date_trunc("week", col("date")))
+        # Fill any missing columns with 0
+        for week in expected_weeks:
+            if week not in Textkernel_df.columns:
+                Textkernel_df = Textkernel_df.withColumn(week, F.lit(0))
 
-    # Create ordered list of weekly labels
-    Dates = Textkernel_df \
-        .select("year_week_label", "week_start_date") \
-        .dropDuplicates() \
-        .sort("week_start_date") \
-        .select("year_week_label") \
-        .rdd.flatMap(lambda x: x).collect()
-
-    # Aggregate by groupByVariableList and pivot by week
-    if isinstance(groupByVariableList, list):
-        Dates = groupByVariableList + Dates
-        Textkernel_df = Textkernel_df \
-            .groupBy(groupByVariableList) \
-            .pivot("year_week_label") \
-            .agg(count(col("job_id"))) \
-            .orderBy(groupByVariableList)
-    else:
-        print("groupByVariableList must be a list.")
-        return
-
-    # Apply ordered columns
-    Textkernel_df = Textkernel_df.toDF(*Dates)
+        # Reorder columns to match expected list
+        final_cols = groupByVariableList + expected_weeks
+        Textkernel_df = Textkernel_df.select(final_cols)
 
     return Textkernel_df
