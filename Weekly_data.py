@@ -1,5 +1,5 @@
-from pyspark.sql.functions import col, count, date_format, date_trunc, lit
 import re
+from pyspark.sql.functions import col, count, date_format, date_trunc, lit
 
 def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
     """
@@ -14,17 +14,17 @@ def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
     Returns:
     - Spark DataFrame with weekly new ads grouped by specified variables
     """
-    # Validate dates
+    # Validate date format
     if not re.match(r"\d{4}-\d{2}-\d{2}", date_from) or not re.match(r"\d{4}-\d{2}-\d{2}", date_to):
         raise ValueError("Date format must be YYYY-MM-DD")
 
-    # Filter date range
+    # Filter for the given date range
     Textkernel_df = Textkernel_df.filter((col("date") >= lit(date_from)) & (col("date") <= lit(date_to)))
 
-    # Add a week label using ISO week logic compatible with Spark 3
+    # Create a label column for each week using ISO-compatible Spark 3 syntax
     Textkernel_df = Textkernel_df.withColumn("week_label", date_format(date_trunc("week", col("date")), "yyyy-ww"))
 
-    # Create ordered list of weeks
+    # Generate a sorted list of week_label values for correct pivoting
     Dates = (
         Textkernel_df
         .select("week_label")
@@ -34,7 +34,7 @@ def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
         .collect()
     )
 
-    # Group and pivot the data
+    # Group by user-defined variables and week_label, then pivot and aggregate
     if isinstance(groupByVariableList, list):
         Textkernel_df = (
             Textkernel_df
@@ -45,7 +45,7 @@ def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
             .sum("count")
         )
 
-    # Ensure final DataFrame has ordered columns
+    # Apply ordered column layout to avoid mismatch during downstream joins
     Textkernel_df = Textkernel_df.select(groupByVariableList + Dates)
 
     return Textkernel_df
