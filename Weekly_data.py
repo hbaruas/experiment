@@ -1,65 +1,55 @@
-from pyspark.sql.functions import col, weekofyear, year, lpad, concat_ws, date_trunc, count, lit
-from collections import OrderedDict
+from pyspark.sql.functions import col, datediff, lit, floor, concat_ws, lpad, count
 import re
+from collections import OrderedDict
 
-def new_ads(groupByVariableList, Textkernel_df, date_from, date_to):
+def new_ads_simple_weeks(groupByVariableList, Textkernel_df, date_from, date_to):
     """
-    Returns weekly count of new ads within date range, grouped by specified variables.
-
-    Parameters:
-    - groupByVariableList: list of columns to group by
-    - Textkernel_df: Spark DataFrame with at least 'date' and 'job_id'
-    - date_from: "YYYY-MM-DD" string
-    - date_to: "YYYY-MM-DD" string
-
-    Returns:
-    - Pivoted Spark DataFrame with weekly new ad counts
+    Groups ads into fixed 7-day weeks starting from date_from, and pivots the result.
     """
 
-    # 1. Validate input date format
+    # Validate input dates
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_from) or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_to):
         raise ValueError("Dates must be in YYYY-MM-DD format")
 
-    # 2. Filter only rows within date range
+    # Filter date range
     Textkernel_df = Textkernel_df.filter(
         (col("date") >= lit(date_from)) & (col("date") <= lit(date_to))
     )
 
-    # 3. Generate ISO-compatible week label and week start date
-    Textkernel_df = Textkernel_df \
-        .withColumn("iso_week", lpad(weekofyear(col("date")).cast("string"), 2, "0")) \
-        .withColumn("iso_year", year(col("date")).cast("string")) \
-        .withColumn("year_week_label", concat_ws("-", col("iso_year"), col("iso_week"))) \
-        .withColumn("week_start_date", date_trunc("week", col("date")))
+    # Assign fixed 7-day rolling week IDs starting from date_from
+    Textkernel_df = Textkernel_df.withColumn(
+        "week_number",
+        floor(datediff(col("date"), lit(date_from)) / 7)
+    ).withColumn(
+        "week_id",
+        concat_ws("_", lit("week"), lpad(col("week_number").cast("string"), 3, "0"))
+    )
 
-    # 4. Get list of unique week labels, ordered
-    Dates = (
-        Textkernel_df
-        .select("year_week_label", "week_start_date")
+    # Get sorted week labels
+    week_labels = (
+        Textkernel_df.select("week_id")
         .dropDuplicates()
-        .sort("week_start_date")
-        .select("year_week_label")
+        .sort("week_id")
         .rdd.flatMap(lambda x: x)
         .collect()
     )
 
-    # 5. Deduplicate week labels in case of data issues
-    Dates = list(OrderedDict.fromkeys(Dates))  # preserves order, removes duplicates
+    week_labels = list(OrderedDict.fromkeys(week_labels))
 
-    # 6. Pivot table with ad counts
+    # Group and pivot
     if isinstance(groupByVariableList, list):
         Textkernel_df = (
             Textkernel_df
-            .groupBy(groupByVariableList + ["year_week_label"])
+            .groupBy(groupByVariableList + ["week_id"])
             .agg(count("job_id").alias("count"))
             .groupBy(groupByVariableList)
-            .pivot("year_week_label", Dates)
+            .pivot("week_id", week_labels)
             .sum("count")
         )
     else:
         raise ValueError("groupByVariableList must be a list")
 
-    # 7. Final column ordering
-    Textkernel_df = Textkernel_df.select(groupByVariableList + Dates)
+    # Final ordering
+    Textkernel_df = Textkernel_df.select(groupByVariableList + week_labels)
 
     return Textkernel_df
