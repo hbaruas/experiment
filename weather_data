@@ -51,30 +51,3 @@ print(f"✅ CSV saved to: {output_csv}")
 	•	Nearing publication as part of the monthly release.
 
 
-
-Subject: Request to Install spaCy and en_core_web_lg Model on the DAP Environment
-
-Dear [Team/Support/Platform Operations],
-
-I hope you’re well.
-
-I am writing to request the installation of the Python NLP library spaCy along with the en_core_web_lg model in the DAP environment.
-
-As part of my current work within [insert your team name or project, e.g. “the Real-Time Indicators team”], I am developing a natural language processing (NLP) pipeline to extract structured information from large volumes of unstructured job advert text. This involves identifying noun phrases, named entities, and semantic patterns relevant to labour market indicators.
-
-To achieve this, I require:
-	•	spaCy, which is a widely used industrial-strength NLP library for tokenization, part-of-speech tagging, parsing, named entity recognition, and more.
-	•	en_core_web_lg, which is a pre-trained large English model for spaCy. It includes word vectors and provides higher accuracy for semantic similarity and named entity recognition tasks than the default small model.
-
-Unfortunately, spaCy and this specific model are not currently available via the DAP’s internal artifactory or environment configuration tools. I would be very grateful if the platform team could consider making them available, as they are essential for progressing with the NLP-related elements of our analysis.
-
-If you need any further technical details or justification for this request, I’d be happy to provide more information or arrange a short meeting.
-
-Many thanks in advance for your help and support.
-
-https://github.com/explosion/spacy-models/releases/tag/en_core_web_md-3.7.1
-
-Best regards,
-Saurabh Kumar
-Senior Data Scientist
-Office for National Statistics
