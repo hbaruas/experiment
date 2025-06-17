@@ -31,44 +31,4 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
-
-#https://www.metoffice.gov.uk/research/climate/maps-and-data/historic-station-data
-
-
-	•	Collaborating with other teams in the division:
-	•	Built an MVP using natural language processing to understand and quantify the role of data in the UK job market.
-	•	Port Data Project:
-	•	Publishing ship counts at major UK ports.
-	•	Exploring further analysis on free ports to assess their economic impact.
-	•	Land Mobility Data:
-	•	Reviving work on land mobility using traffic camera data in collaboration with RDSA.
-	•	Weather and Consumer Behaviour:
-	•	Analysing Met Office and CEDA data to study the effect of extreme weather on:
-	•	Retail footfall.
-	•	Consumer behaviours (e.g. electricity payment failures, weather-linked patterns).
-	•	VAT Flash Estimates:
-	•	Partnering with Data Science Campus to convert the 7-day VAT flash estimate diffusion index into a numerical index.
-	•	Nearing publication as part of the monthly release.
-
-
-Subject: Re: OECD “Data” Work – Noun Chunks and Classification
-
-Hi David,
-
-Thanks for your question.
-
-To confirm, the OECD did not provide a list of noun chunks. In our recreation, we generated noun chunks ourselves by processing the job descriptions using SpaCy’s natural language processing tools. These noun chunks were not pre-labelled — we had to classify them into categories like data production, data analytics, or databases based on their meaning.
-
-Once we had the noun chunks, we compared each one to a small list of representative terms (or “landmark descriptors”) that we defined for each category. For example, if a noun chunk like “relational database” was most similar in meaning to descriptors like “SQL” or “data warehouse”, we classified it under databases. Similarly, a chunk like “statistical model” would align more closely with data analytics.
-
-This classification was based on how semantically close each noun chunk was to the terms in each category — using language models that understand meaning beyond just exact word matches.
-
-⸻
-
-Side note:
-I’ve been working on bringing this pipeline into the DAP environment. However, the key SpaCy model we rely on (en_core_web_md, which is essential for understanding meaning and doing this kind of classification) isn’t currently available on DAP. I’ve raised this with the DAP CATS team, but unfortunately, there hasn’t been a resolution so far. I’ll continue trying to find a workaround or lighter alternative in the meantime.
-
-Please let me know if you’d like a sample list of the database-related terms we identified, or any further details.
-
-Best regards,
-Saurabh
+h
