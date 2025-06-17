@@ -31,12 +31,8 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
-Stated Month and Reporting Period
-
 The VAT flash estimates are based on VAT returns received by HMRC within the first seven calendar days following the end of each month. These returns are used to produce an early indicator of turnover trends.
 
-In practice, the returns included in the flash estimate are almost exclusively from businesses that report monthly. As a result, the data used for, say, the June publication will mostly reflect turnover that occurred in May.
+The flash estimates are constructed using returns from businesses that report VAT monthly, meaning the dataset reflects turnover that occurred during the preceding calendar month. For example, the June flash publication includes returns received between 1–7 June, which report on business activity in May.
 
-While some VAT returns may be submitted on a quarterly basis, these businesses do not report every month and are therefore not consistently represented in the 7-day window used for the flash estimate. For this reason, the flash estimates are generally reflective of monthly reporting periods, unlike other VAT-based indicators that include a mix of reporting frequencies.
-
-This distinction is important, as it means the stated month in the flash estimate closely aligns with the actual month of business activity for the majority of included records.
+Quarterly or annual reporting businesses are not included, as they do not file returns every month and are not part of the flash estimate pipeline. As a result, the stated month in the VAT flash series closely aligns with the actual month of economic activity for the included businesses.
