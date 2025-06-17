@@ -31,4 +31,22 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
-h
+Hi Celia,
+
+Yes, that statement is correct for the context of VAT data used in ONS’s Real Time Indicators.
+
+ONS’s methodology for the VAT flash estimates clearly states:
+	•	For real-time indicators, only VAT returns received by HMRC within the first seven calendar days after the end of each month are used  ￼.
+	•	It explicitly says:
+“The stated month is when the return was received by HM Revenue and Customs (HMRC), not the reporting period.”  ￼
+
+Example:
+If HMRC receives a VAT return on June 5 (within the seven-day window), it is included in the June RTI publication, even if the actual business activity covered was for March–May. This ensures timeliness but introduces a lag relative to the actual reporting period.
+
+Let me know if you’d like this formatted for a slide deck or briefing note.
+
+Best,
+Saurabh
+
+
+https://www.ons.gov.uk/economy/economicoutputandproductivity/output/methodologies/coronavirusandthelatestindicatorsfortheukeconomyandsocietymethodology?utm_source=chatgpt.com
