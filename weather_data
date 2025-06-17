@@ -51,3 +51,24 @@ print(f"✅ CSV saved to: {output_csv}")
 	•	Nearing publication as part of the monthly release.
 
 
+Subject: Re: OECD “Data” Work – Noun Chunks and Classification
+
+Hi David,
+
+Thanks for your question.
+
+To confirm, the OECD did not provide a list of noun chunks. In our recreation, we generated noun chunks ourselves by processing the job descriptions using SpaCy’s natural language processing tools. These noun chunks were not pre-labelled — we had to classify them into categories like data production, data analytics, or databases based on their meaning.
+
+Once we had the noun chunks, we compared each one to a small list of representative terms (or “landmark descriptors”) that we defined for each category. For example, if a noun chunk like “relational database” was most similar in meaning to descriptors like “SQL” or “data warehouse”, we classified it under databases. Similarly, a chunk like “statistical model” would align more closely with data analytics.
+
+This classification was based on how semantically close each noun chunk was to the terms in each category — using language models that understand meaning beyond just exact word matches.
+
+⸻
+
+Side note:
+I’ve been working on bringing this pipeline into the DAP environment. However, the key SpaCy model we rely on (en_core_web_md, which is essential for understanding meaning and doing this kind of classification) isn’t currently available on DAP. I’ve raised this with the DAP CATS team, but unfortunately, there hasn’t been a resolution so far. I’ll continue trying to find a workaround or lighter alternative in the meantime.
+
+Please let me know if you’d like a sample list of the database-related terms we identified, or any further details.
+
+Best regards,
+Saurabh
