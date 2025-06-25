@@ -31,15 +31,31 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
-Hi David,
+Hi Matt,
 
-Thanks for the follow-up.
+I hope you’re well.
 
-Just to reaffirm, we’ve not yet been able to use the Textkernel data in DAP, as mentioned earlier. The key blocker remains the unavailability of the en_core_web_md model, which is essential for semantic understanding in our classification work using SpaCy. I raised this with the DAP CATS team, and I’ve been told it’s now on their improvements backlog as of a few days ago.
+I wanted to share a quick update on the job classification work I’m progressing, which follows the OECD methodology for grouping tasks found in job descriptions into categories such as data entry, data analytics, and database-related work. The classification process relies on extracting meaningful phrases from job ads and comparing them to reference examples using semantic similarity — essentially assessing how closely related they are in meaning.
 
-In terms of progress, aside from the earlier demo, the main output so far is the classification of job adverts into distinct “buckets” — such as data analytics, data product, and databases — using a sample of 10,000 adverts from Reed. I’m happy to walk through that again if helpful.
+Outside the DAP environment, I’ve built and tested this approach using spaCy’s en_core_web_md model, which provides the pre-trained word vectors needed for semantic comparison. These word vectors are a key part of the OECD’s published method and are what enable the pipeline to match phrases even when the wording varies.
 
-I’ll also forward the most recent interaction I had with the DAP CATS team. It might help make the case to reprioritise this request so we can begin using the model in DAP with actual data.
+While the base spaCy library is available within DAP, the specific en_core_web_md model is not currently installed, and due to internet access restrictions, I’m unable to download it within the platform. This creates a gap in the workflow, as we’re unable to replicate the OECD-aligned method in the secure environment where our data resides.
+
+As a temporary workaround, I’m planning to rebuild the classification using NLTK and TF-IDF-based similarity, which will allow the process to run fully within DAP. However, this comes with important limitations:
+	•	It can’t understand meaning — only word overlap.
+For example, it will treat “spreadsheet” and “Excel file” as unrelated, even though they clearly refer to the same thing.
+	•	It’s very sensitive to phrasing.
+“Processing customer data” and “data from customers is processed” may be interpreted as different, even though they are semantically equivalent.
+	•	It can miss broader context.
+A phrase like “SQL database maintenance” may not match the ‘database’ category unless the exact words are present in the reference set.
+	•	It struggles with synonyms and abbreviations.
+Terms like “ETL process” may not match “data pipeline” without vector-based similarity, even though they describe the same concept.
+	•	Overall, it reduces classification quality and interpretability.
+The OECD methodology was designed around vector-based models for a reason — to capture meaning across varied job language in a consistent way.
+
+To clarify further: en_core_web_md is a medium-sized English language model developed by spaCy. It includes 300-dimensional word vectors that enable these meaningful comparisons between phrases. Without it, we’re unable to fully implement the semantic classification that underpins the OECD’s approach. Enabling this model in DAP — either via pre-installation or internal packaging — would allow us to keep our methodology consistent, reduce duplication of effort across environments, and improve output quality.
+
+I’d be happy to discuss further or collaborate with the platform team if there’s a way forward on this.
 
 Best regards,
 Saurabh
