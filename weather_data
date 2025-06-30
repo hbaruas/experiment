@@ -31,49 +31,27 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
-Certainly, Saurabh. Here is your final single response, rewritten precisely for the ONS AI Approval (Step 2) Detailed Submission form. This version:
-	•	Reflects that there is no direct OECD collaboration
-	•	Clarifies that the project is based on an OECD methodology
-	•	Emphasises that the models are not AI or LLMs
-	•	Addresses Security, Legal, Ethics, and KIM concerns in a direct, formal tone
+Subject: Clarification on spaCy NLP Model (en_core_web_md/lg) – Request for Confirmation
 
-You can copy and paste this directly into the form:
+Dear Governance and Assurance Team,
 
-⸻
+I hope you’re well.
 
-Title
+I’m reaching out to seek clarification regarding the spaCy NLP models (en_core_web_md and en_core_web_lg) that I am requesting to be made available via the ONS Artifactory for use in our text analytics work within the DAP.
 
-Use of SpaCy en_core_web_md and en_core_web_lg Models to Reproduce OECD Methodology for Labour Market Task Classification
+There appears to be some concern that these models may fall under the category of AI, which would require additional governance steps. However, I would like to clarify that these are pre-trained statistical natural language processing (NLP) models, used for basic text processing tasks such as tokenization, named entity recognition, and part-of-speech tagging. They do not:
+	•	Include any form of generative AI or Large Language Models (LLMs),
+	•	Make connections to the internet or external APIs,
+	•	Perform autonomous decision-making,
+	•	Or adapt/retrain themselves during use.
 
-⸻
+The models are fully deterministic and downloaded locally for use within a controlled environment, in line with standard open-source NLP libraries like spaCy (widely used in the public sector and academia).
 
-Short Description
+Emma Eason mentioned that this might be considered a grey area, and recommended I reach out to your team for confirmation. If you are happy that this does not meet the definition of AI under ONS policies, we can proceed with uploading the model without triggering further governance requirements.
 
-This project aims to reproduce and test the task classification methodology described in an OECD white paper focused on measuring “Data as an Asset” in the labour market. The methodology involves analysing job advertisements to classify and quantify the presence of data-related tasks (such as data entry, database management, and analytics) across occupations and sectors.
+Please let me know if you would like any technical documentation or further clarification. I’d be happy to provide it.
 
-We plan to apply this methodology to the Text Kernel job advert dataset available in the DAP environment, using lightweight natural language processing (NLP) techniques to identify relevant noun phrases and compute their similarity to reference task categories. This approach allows us to assess the evolving nature of digital and data-related work in the UK labour market.
-
-To carry out this work, we request installation of the open-source SpaCy models en_core_web_md and en_core_web_lg. These models are:
-	•	Publicly available and MIT-licensed from the SpaCy NLP library
-	•	Pre-trained, static language models used for tokenisation, part-of-speech tagging, and vector-based similarity calculations
-	•	Entirely rule-based and deterministic; they do not learn from data, generate new content, or adapt in any way
-	•	Designed to run locally, without any internet connectivity or external API dependencies
-	•	Commonly used in academic and public sector NLP work for reproducible and explainable analysis
-
-These models do not meet the definition of Artificial Intelligence (AI) or Large Language Models (LLMs) as defined by ONS, CDP, or central government guidance. They do not perform generative tasks, do not connect to external services, and are not used to automate decisions.
-
-⸻
-
-Security, Legal, Ethics, and KIM Considerations
-	•	The models are offline, self-contained, and do not require or initiate any internet connection
-	•	The analysis is conducted on non-personal, publicly sourced job advert data
-	•	No personal or sensitive information is used, stored, or exposed
-	•	There are no legal, ethical, security, or KIM concerns
-	•	The methodology is fully transparent and outputs are deterministic and auditable
-	•	Results will be used for internal research and statistical insight purposes only
-
-Installing these SpaCy models within DAP will enable scalable processing and monthly refresh of indicators aligned with OECD methodology, supporting the Real-Time Indicators programme’s goals of timely and reproducible labour market analysis.
-
-⸻
-
-Let me know if you’d like a short annex or attachment in case you are asked for further clarification.
+Kind regards,
+Saurabh Kumar
+Senior Data Scientist
+Office for National Statistics
