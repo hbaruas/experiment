@@ -30,28 +30,19 @@ df = pd.DataFrame(clean_rows, columns=["year", "month", "tmax", "tmin", "af", "r
 df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
+Is one of the main objective of this dataset to understand the GDP and if yes then how is that possible, I know we have the monthly GDP data and we have the monthly VAT data what are the ways that has been used to understand the GDP with the help of VAT monthly data, and if we are doing the comparison between two what all matrices can be used.    What is the turnover and what is the expenditure ?  Is there any other economic insight we can get from this data.
 
-Subject: Clarification on spaCy NLP Model (en_core_web_md/lg) – Request for Confirmation
+Is diffusion index a common index to use, if yes than where are its use cases and how it comes into existance.   
 
-Dear Governance and Assurance Team,
+on the basis of page 3 of the report please tell me the pros and cons of DI with the help of a simple example.  In one case it is mentioned that DI does not use the continous real neumeric data and uses the Discrete data how does that work and what do they mean by that.
 
-I hope you’re well.
+What is a firm level level weighting and the industry level weighting, at the moment in the RTI vat data do we do the firm level weighting or industry level weighting can you please check using the publication methadology of the vat or previous publications of the VAT.
 
-I’m reaching out to seek clarification regarding the spaCy NLP models (en_core_web_md and en_core_web_lg) that I am requesting to be made available via the ONS Artifactory for use in our text analytics work within the DAP.
 
-There appears to be some concern that these models may fall under the category of AI, which would require additional governance steps. However, I would like to clarify that these are pre-trained statistical natural language processing (NLP) models, used for basic text processing tasks such as tokenization, named entity recognition, and part-of-speech tagging. They do not:
-	•	Include any form of generative AI or Large Language Models (LLMs),
-	•	Make connections to the internet or external APIs,
-	•	Perform autonomous decision-making,
-	•	Or adapt/retrain themselves during use.
+So my understanding is that ONS devised four methods for outleir DETECTION in the VAT data,   these are 1 - Thousand pound Rule (TPR)
+2 - Quarterly Pattern Rule (QPR)  both of these methods detect and treat the outliers.  3 - Susupicious return Rule (SRR)
+4 - First Return Rule (FRR) 
 
-The models are fully deterministic and downloaded locally for use within a controlled environment, in line with standard open-source NLP libraries like spaCy (widely used in the public sector and academia).
+only detect the outlier and don’t treat them. page 19 have all the information about the outlier treatment and their usage. Are these method poperirty to ONS or are they widely used, can you please explain to me how these method works with the help of a hand calculated real example if possible.  it has been mentioned that they adapted the QPR to monthly pattern rule how did they do that is it possible and is it ethical to do that in terms of methadology.   It has been mentioned that DI is much suscptible to outliers as compared to the NI why is that.  What is the windsorisation when it comes to outlier treatment. and how does it work help me to understand it with a simple hand calculated example,  also it has been mentioned in the report that 3 - Susupicious return Rule (SRR)
+4 - First Return Rule (FRR) used for detection and then windsorisation has been used for the outlier treatment is that even possible and correct to do that.  P3 returns are recieved weekly, P1 are recieved monthly.  Which of these are used for 7 days DI flash estimate and which of these are used for new reporter.  Can you give me an example of Diffusion index calculation and numerical index calculation with the help of a simple hand caclulated example.  In the simplest terms can you please explain the model they have been using for the prediction. And also is there idea is to use the VAT data to predict the GDP to show the worth of the vat data.   what is the difference between nowcasting and forecasting in general and in the context of our VAT work.   One of the main agenda of this whole report is that, Numerical index can be used when it comes to predic the GDP, but Numerical index with outlier treatement is worst when it comes to GDP prediction, slightly better is the DI and the best is Numerical index without any outlier treatment.   SRR return rule is flaggin 44.1% all the returns as the outlier so why are we applying it.  Are the outlier detecting outliers and treating them too sevearly   For the NI they have turned the outleir treatment QPR to MPR does that mean, if we are publishing the 7 days flash estimate with diffusion index and it is a monthly data it does not have the QPR rule applied.  What is the difference between RSquared and adjusted RSquared  Are we using any kind of outlier detection and treatment with diffusion index.  are there any null values in the data and if they are what is the reason for them and how they are being treated.
 
-Emma Eason mentioned that this might be considered a grey area, and recommended I reach out to your team for confirmation. If you are happy that this does not meet the definition of AI under ONS policies, we can proceed with uploading the model without triggering further governance requirements.
-
-Please let me know if you would like any technical documentation or further clarification. I’d be happy to provide it.
-
-Kind regards,
-Saurabh Kumar
-Senior Data Scientist
-Office for National Statistics
