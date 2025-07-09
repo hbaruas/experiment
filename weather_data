@@ -30,19 +30,92 @@ df = pd.DataFrame(clean_rows, columns=["year", "month", "tmax", "tmin", "af", "r
 df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
-Is one of the main objective of this dataset to understand the GDP and if yes then how is that possible, I know we have the monthly GDP data and we have the monthly VAT data what are the ways that has been used to understand the GDP with the help of VAT monthly data, and if we are doing the comparison between two what all matrices can be used.    What is the turnover and what is the expenditure ?  Is there any other economic insight we can get from this data.
-
-Is diffusion index a common index to use, if yes than where are its use cases and how it comes into existance.   
-
-on the basis of page 3 of the report please tell me the pros and cons of DI with the help of a simple example.  In one case it is mentioned that DI does not use the continous real neumeric data and uses the Discrete data how does that work and what do they mean by that.
-
-What is a firm level level weighting and the industry level weighting, at the moment in the RTI vat data do we do the firm level weighting or industry level weighting can you please check using the publication methadology of the vat or previous publications of the VAT.
 
 
-So my understanding is that ONS devised four methods for outleir DETECTION in the VAT data,   these are 1 - Thousand pound Rule (TPR)
-2 - Quarterly Pattern Rule (QPR)  both of these methods detect and treat the outliers.  3 - Susupicious return Rule (SRR)
-4 - First Return Rule (FRR) 
 
-only detect the outlier and don’t treat them. page 19 have all the information about the outlier treatment and their usage. Are these method poperirty to ONS or are they widely used, can you please explain to me how these method works with the help of a hand calculated real example if possible.  it has been mentioned that they adapted the QPR to monthly pattern rule how did they do that is it possible and is it ethical to do that in terms of methadology.   It has been mentioned that DI is much suscptible to outliers as compared to the NI why is that.  What is the windsorisation when it comes to outlier treatment. and how does it work help me to understand it with a simple hand calculated example,  also it has been mentioned in the report that 3 - Susupicious return Rule (SRR)
-4 - First Return Rule (FRR) used for detection and then windsorisation has been used for the outlier treatment is that even possible and correct to do that.  P3 returns are recieved weekly, P1 are recieved monthly.  Which of these are used for 7 days DI flash estimate and which of these are used for new reporter.  Can you give me an example of Diffusion index calculation and numerical index calculation with the help of a simple hand caclulated example.  In the simplest terms can you please explain the model they have been using for the prediction. And also is there idea is to use the VAT data to predict the GDP to show the worth of the vat data.   what is the difference between nowcasting and forecasting in general and in the context of our VAT work.   One of the main agenda of this whole report is that, Numerical index can be used when it comes to predic the GDP, but Numerical index with outlier treatement is worst when it comes to GDP prediction, slightly better is the DI and the best is Numerical index without any outlier treatment.   SRR return rule is flaggin 44.1% all the returns as the outlier so why are we applying it.  Are the outlier detecting outliers and treating them too sevearly   For the NI they have turned the outleir treatment QPR to MPR does that mean, if we are publishing the 7 days flash estimate with diffusion index and it is a monthly data it does not have the QPR rule applied.  What is the difference between RSquared and adjusted RSquared  Are we using any kind of outlier detection and treatment with diffusion index.  are there any null values in the data and if they are what is the reason for them and how they are being treated.
 
+📘 Title: Using SpaCy’s en_core_web_md for Labour Market Analysis in DAP
+
+⸻
+
+Slide 1: Context and Objective
+	•	Objective: Implement OECD-aligned methodology for analysing job adverts data within DAP
+	•	Focus: Classify data-related tasks (data entry, data analytics, database work) using TextKernel job adverts
+	•	Goal: Provide better real-time labour market indicators using structured NLP
+
+⸻
+
+Slide 2: What is SpaCy and en_core_web_md?
+	•	SpaCy is an open-source NLP library developed and maintained by Explosion AI
+	•	en_core_web_md is a medium-sized English model that works with SpaCy, providing:
+	•	Pretrained word vectors
+	•	POS tagging, Named Entity Recognition (NER), noun chunking
+	•	Semantic similarity functions
+	•	Licensed under the MIT License (open-source, permissive, no cost)
+
+⸻
+
+Slide 3: What en_core_web_md is NOT
+	•	❌ Not an AI or LLM
+	•	❌ Not a generative or predictive model
+	•	❌ No internet access required
+	•	❌ No external data processing or transmission
+	•	✅ Fully offline, deterministic, and static data file
+
+⸻
+
+Slide 4: Why It Is Needed
+	•	Core to OECD-aligned analysis of job descriptions
+	•	Enables semantic comparison of job text to landmark task categories
+	•	Specifically required for:
+	•	Extracting noun chunks
+	•	Computing cosine similarity
+	•	Classifying tasks based on skill clusters
+Slide 5: Security, Legal, and KIM Considerations
+
+Concern
+Addressed By
+Internet Access
+❌ Not required — model runs locally
+AI / LLM Concerns
+❌ Not an AI model — just pretrained embeddings
+Data Risk
+❌ No data leaves DAP — all local, auditable
+Licensing
+✅ MIT License — free, open, legally safe
+Ownership
+✅ Maintained by Explosion AI
+Reproducibility
+✅ Fully version-controlled and transparent
+
+
+Slide 6: What I’m Requesting
+	•	Approval to install the en_core_web_md model inside the DAP virtual environment
+	•	Alternatives (if needed):
+	•	Container with model pre-installed
+	•	Manual approval via secure installation pathway
+	•	Risk-audited exception through the Software Request process
+
+⸻
+
+Slide 7: Summary & Impact
+	•	Enables structured, high-impact labour market analysis
+	•	Supports internal replication of OECD’s methodology
+	•	Very low operational or security risk
+	•	Compliant with all known ONS security, legal, and policy requirements
+
+⸻
+
+Slide 8: SpaCy vs en_core_web_md – What’s Missing in DAP
+	•	✅ SpaCy (the library) is already installed and approved in ONS/DAP
+	•	❌ Models like en_core_web_md are not available by default, but are required
+	•	Why separate?
+	•	Models contain pretrained weights (data), not executable code
+	•	Designed to be downloaded once and reused offline
+	•	Why we need the model:
+	•	SpaCy without a model = engine without fuel
+	•	Core functionality like tagging, chunking, similarity depends on the model
+	•	These models are:
+	•	✅ Open-source under MIT
+	•	✅ Maintained by Explosion AI
+	•	✅ Safe and compliant for internal use
