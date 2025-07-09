@@ -32,90 +32,10 @@ df.to_csv(output_csv, index=False)
 print(f"✅ CSV saved to: {output_csv}")
 
 
+Project Overview – Labour Market Task Classification Using Job Adverts
 
+We are building a structured text analytics pipeline within the DAP environment to support the classification of job tasks described in job adverts. This work aligns with the OECD’s “Data as an Asset” methodology and aims to generate timely, granular insights into the types of data-related work being demanded across the labour market — including categories such as data entry, data analytics, and database administration.
 
-📘 Title: Using SpaCy’s en_core_web_md for Labour Market Analysis in DAP
+A central motivation of this project, from both the ONS and OECD perspective, is to understand which jobs are actively involved in the production, handling, or transformation of data. Rather than relying on job titles alone, which can be misleading, we are analysing the actual content of job descriptions to detect the presence and intensity of data-producing tasks. This allows us to identify where in the workforce data-related activity is really happening.
 
-⸻
-
-Slide 1: Context and Objective
-	•	Objective: Implement OECD-aligned methodology for analysing job adverts data within DAP
-	•	Focus: Classify data-related tasks (data entry, data analytics, database work) using TextKernel job adverts
-	•	Goal: Provide better real-time labour market indicators using structured NLP
-
-⸻
-
-Slide 2: What is SpaCy and en_core_web_md?
-	•	SpaCy is an open-source NLP library developed and maintained by Explosion AI
-	•	en_core_web_md is a medium-sized English model that works with SpaCy, providing:
-	•	Pretrained word vectors
-	•	POS tagging, Named Entity Recognition (NER), noun chunking
-	•	Semantic similarity functions
-	•	Licensed under the MIT License (open-source, permissive, no cost)
-
-⸻
-
-Slide 3: What en_core_web_md is NOT
-	•	❌ Not an AI or LLM
-	•	❌ Not a generative or predictive model
-	•	❌ No internet access required
-	•	❌ No external data processing or transmission
-	•	✅ Fully offline, deterministic, and static data file
-
-⸻
-
-Slide 4: Why It Is Needed
-	•	Core to OECD-aligned analysis of job descriptions
-	•	Enables semantic comparison of job text to landmark task categories
-	•	Specifically required for:
-	•	Extracting noun chunks
-	•	Computing cosine similarity
-	•	Classifying tasks based on skill clusters
-Slide 5: Security, Legal, and KIM Considerations
-
-Concern
-Addressed By
-Internet Access
-❌ Not required — model runs locally
-AI / LLM Concerns
-❌ Not an AI model — just pretrained embeddings
-Data Risk
-❌ No data leaves DAP — all local, auditable
-Licensing
-✅ MIT License — free, open, legally safe
-Ownership
-✅ Maintained by Explosion AI
-Reproducibility
-✅ Fully version-controlled and transparent
-
-
-Slide 6: What I’m Requesting
-	•	Approval to install the en_core_web_md model inside the DAP virtual environment
-	•	Alternatives (if needed):
-	•	Container with model pre-installed
-	•	Manual approval via secure installation pathway
-	•	Risk-audited exception through the Software Request process
-
-⸻
-
-Slide 7: Summary & Impact
-	•	Enables structured, high-impact labour market analysis
-	•	Supports internal replication of OECD’s methodology
-	•	Very low operational or security risk
-	•	Compliant with all known ONS security, legal, and policy requirements
-
-⸻
-
-Slide 8: SpaCy vs en_core_web_md – What’s Missing in DAP
-	•	✅ SpaCy (the library) is already installed and approved in ONS/DAP
-	•	❌ Models like en_core_web_md are not available by default, but are required
-	•	Why separate?
-	•	Models contain pretrained weights (data), not executable code
-	•	Designed to be downloaded once and reused offline
-	•	Why we need the model:
-	•	SpaCy without a model = engine without fuel
-	•	Core functionality like tagging, chunking, similarity depends on the model
-	•	These models are:
-	•	✅ Open-source under MIT
-	•	✅ Maintained by Explosion AI
-	•	✅ Safe and compliant for internal use
+By leveraging tools like SpaCy (already approved within DAP) and the en_core_web_md model, we can convert unstructured text into quantifiable indicators of task intensity, which are then aggregated at the SOC (Standard Occupational Classification) and industry sector level. The resulting indicators will provide valuable evidence for policymakers on the composition of the UK’s data workforce, inform digital skills planning, and support the design of real-time labour market dashboards and forecasting models.
