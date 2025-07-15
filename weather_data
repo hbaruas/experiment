@@ -35,19 +35,29 @@ print(f"✅ CSV saved to: {output_csv}")
 library(readr)
 library(dplyr)
 
+# Custom rounding function to nearest 5
+round_to_5 <- function(x) {
+  round(x / 5) * 5
+}
+
 # Load data
-data <- read_csv("your_input_file.csv")  # Replace with actual file path
+data <- read_csv("your_input_file.csv")  # Replace with actual path
 
-# Perform aggregation
+# Replace blank SOC code with "Unknown"
+data <- data %>%
+  mutate(soc_4_digit_code = ifelse(is.na(soc_4_digit_code) | soc_4_digit_code == "", "Unknown", as.character(soc_4_digit_code)))
+
+# Aggregate by SOC code and label
 uk_summary <- data %>%
-  select(-region_label) %>%  # Remove the region column
-  group_by(soc_4_digit_code, soc_4_digit_label) %>%  # Group by SOC code and label
-  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%  # Sum all monthly values
-  mutate(Country = "Total UK") %>%  # Add new column 'Country'
-  select(Country, everything())  # Reorder to place 'Country' as first column
+  select(-region_label) %>%
+  group_by(soc_4_digit_code, soc_4_digit_label) %>%
+  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%
+  mutate(across(where(is.numeric), round_to_5)) %>%
+  mutate(Country = "Total UK") %>%
+  select(Country, everything())
 
-# View the result
+# View output
 print(head(uk_summary))
 
-# Optionally save to file
-# write_csv(uk_summary, "UK_aggregated_output.csv")
+# Optionally write to CSV
+# write_csv(uk_summary, "UK_aggregated_rounded.csv")
