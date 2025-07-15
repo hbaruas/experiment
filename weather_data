@@ -32,10 +32,22 @@ df.to_csv(output_csv, index=False)
 print(f"✅ CSV saved to: {output_csv}")
 
 
-Project Overview – Labour Market Task Classification Using Job Adverts
+library(readr)
+library(dplyr)
 
-We are building a structured text analytics pipeline within the DAP environment to support the classification of job tasks described in job adverts. This work aligns with the OECD’s “Data as an Asset” methodology and aims to generate timely, granular insights into the types of data-related work being demanded across the labour market — including categories such as data entry, data analytics, and database administration.
+# Load data
+data <- read_csv("your_input_file.csv")  # Replace with actual file path
 
-A central motivation of this project, from both the ONS and OECD perspective, is to understand which jobs are actively involved in the production, handling, or transformation of data. Rather than relying on job titles alone, which can be misleading, we are analysing the actual content of job descriptions to detect the presence and intensity of data-producing tasks. This allows us to identify where in the workforce data-related activity is really happening.
+# Perform aggregation
+uk_summary <- data %>%
+  select(-region_label) %>%  # Remove the region column
+  group_by(soc_4_digit_code, soc_4_digit_label) %>%  # Group by SOC code and label
+  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop") %>%  # Sum all monthly values
+  mutate(Country = "Total UK") %>%  # Add new column 'Country'
+  select(Country, everything())  # Reorder to place 'Country' as first column
 
-By leveraging tools like SpaCy (already approved within DAP) and the en_core_web_md model, we can convert unstructured text into quantifiable indicators of task intensity, which are then aggregated at the SOC (Standard Occupational Classification) and industry sector level. The resulting indicators will provide valuable evidence for policymakers on the composition of the UK’s data workforce, inform digital skills planning, and support the design of real-time labour market dashboards and forecasting models.
+# View the result
+print(head(uk_summary))
+
+# Optionally save to file
+# write_csv(uk_summary, "UK_aggregated_output.csv")
