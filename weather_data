@@ -69,3 +69,6 @@ print(head(uk_summary))
 # write_csv(uk_summary, "UK_aggregated_rounded_first.csv")
 # Optionally write to CSV
 # write_csv(uk_summary, "UK_aggregated_rounded.csv")
+
+
+=IF(Sheet1!A1<>Sheet2!A1, Sheet2!A1, Sheet1!A1)
