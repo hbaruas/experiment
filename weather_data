@@ -29,34 +29,18 @@ with open(file_path, "r") as f:
 df = pd.DataFrame(clean_rows, columns=["year", "month", "tmax", "tmin", "af", "rain", "sun"])
 df.to_csv(output_csv, index=False)
 
-Subject: RE: AILG Project ID 65 – Clarification on Aim and Data Coverage
-
-Hi Fiona,
-
-Thanks for your response and for the opportunity to clarify.
-
-Just to distinguish — we’re not aiming to identify how many jobs are data-related (like data analysts or engineers). Instead, our objective is to identify and quantify jobs that are likely to generate data as part of their day-to-day functions, regardless of whether they are classified as data roles.
-
-For example, a delivery driver using a GPS-tracking system, or a factory worker operating a connected machine — these aren’t “data jobs,” but the roles themselves produce data. This perspective helps us better understand how data is being generated across the economy, rather than just who works with data.
-
-On your question about coverage: the job adverts data we’re using spans the UK across all nations and regions, and covers a wide range of occupations. It has been used before in ONS and OECD work (e.g. on automation risk, digital skills, and job clustering), and this piece builds on that by applying a fresh lens — i.e. jobs as contributors to data supply.
-
-We’re happy to link this to past analyses and make the outputs usable for broader strategic and economic thinking around data as an asset.
-
-Best,
-Saurabh
-
-
-
 Hi Steph,
 
 Thanks for your message, and for looking at this from the ethics perspective.
 
-To clarify: this project is using publicly available job advert data supplied by Textkernel, which already exists within the DAP environment and is currently used to support several other labour demand outputs. The purpose of our work is to identify and quantify the share of roles in the UK labour market that involve data production activities, based on job descriptions.
+To clarify: this project is using publicly available job advert data supplied by Textkernel, which already exists within the DAP environment and is used across several other labour demand outputs. The purpose of our work is to identify and quantify the share of roles in the UK labour market that involve data production activities, based on how job responsibilities are described.
 
-At this stage, the work is entirely exploratory — we’re simply requesting the installation of a few standard Python and NLP libraries to enable basic text processing. We’re not processing sensitive data, linking across datasets, or storing any personally identifiable information. All outputs will be fully aggregated (e.g. by SOC code or sector), with no individual-level analysis or re-identification risk.
+At this stage, the work is entirely exploratory, and we’re simply requesting the installation of a few standard Python and NLP libraries to support basic text processing. We are not processing sensitive data, linking datasets, or storing any personally identifiable information. All outputs are aggregated (e.g. by SOC code or sector), with no individual-level analysis or re-identification risk.
 
-Happy to complete an ethics self-assessment if needed, or provide more detail on the wider aims of the project.
+Wider project context:
+This work supports a broader effort to better understand data as an economic input — that is, how data is being produced and used across sectors and occupations in the UK. The goal is to inform future thinking around data infrastructure, digital skills, and the strategic value of data within the economy. We’re building on the OECD’s “Data as a Driver of Growth” framework but applying it empirically using UK-specific job advert data already in DAP.
+
+Happy to provide more detail or complete an ethics self-assessment if needed.
 
 Best wishes,
 Saurabh
