@@ -29,20 +29,36 @@ with open(file_path, "r") as f:
 df = pd.DataFrame(clean_rows, columns=["year", "month", "tmax", "tmin", "af", "rain", "sun"])
 df.to_csv(output_csv, index=False)
 
-print(f"✅ CSV saved to: {output_csv}")
+Subject: RE: AILG Project ID 65 – Clarification on Aim and Data Coverage
 
-Hi Rhys,
+Hi Fiona,
 
-Thanks for raising this — happy to clarify.
+Thanks for your response and for the opportunity to clarify.
 
-We are processing publicly available job adverts (including job descriptions) purely to identify and quantify how many roles involve data production activities. The purpose is analytical and aimed at understanding broader labour market trends — no attempt is made to extract or store personal contact information from the adverts.
+Just to distinguish — we’re not aiming to identify how many jobs are data-related (like data analysts or engineers). Instead, our objective is to identify and quantify jobs that are likely to generate data as part of their day-to-day functions, regardless of whether they are classified as data roles.
 
-We do not use or retain names, email addresses, phone numbers, or any other identifying fields. Furthermore, the analysis does not link adverts to specific individuals or organisations. The results are aggregated and used only to derive high-level insights, such as the share of roles contributing to data creation across sectors or regions.
+For example, a delivery driver using a GPS-tracking system, or a factory worker operating a connected machine — these aren’t “data jobs,” but the roles themselves produce data. This perspective helps us better understand how data is being generated across the economy, rather than just who works with data.
 
-Even in cases where a job title might appear specific (e.g. a rare role such as a Data Protection Officer), the outputs are anonymised and summarised at occupational or industry levels, with no potential for re-identification.
+On your question about coverage: the job adverts data we’re using spans the UK across all nations and regions, and covers a wide range of occupations. It has been used before in ONS and OECD work (e.g. on automation risk, digital skills, and job clustering), and this piece builds on that by applying a fresh lens — i.e. jobs as contributors to data supply.
 
-Please let me know if a DPIA is needed, though we believe this sits well within low-risk processing with no personal data retained.
+We’re happy to link this to past analyses and make the outputs usable for broader strategic and economic thinking around data as an asset.
+
+Best,
+Saurabh
+
+
+
+Hi Fiona,
+
+Thank you so much for your thoughtful response — and sincere apologies for not making the project’s core distinction clearer in my earlier presentation. I now realise I could have communicated this more explicitly.
+
+You’re absolutely right to raise the question around data-related roles — and your framing helped me reflect on how this might have been interpreted. To clarify: our aim isn’t to identify how many roles work with data (such as analysts or engineers), but rather to explore how many jobs are likely to produce data as part of their everyday activity — even if data isn’t the job’s primary output.
+
+For example, roles like delivery drivers, machine operators, or even care workers may generate data passively through digital systems or IoT-connected tools. The insight we’re aiming to generate is about the latent supply of data in the economy — not just the size of the data workforce.
+
+You also raised a valuable point about data coverage and building on existing work. The dataset we’re using has strong UK-wide coverage across all nations and sectors, and has been used previously in ONS and OECD work on automation, skills, and job transformation. We hope this project can build on that foundation and contribute a new dimension to our understanding — complementing other workstreams already underway.
+
+Thanks again for your comments — they’ve really helped sharpen how we position this.
 
 Best regards,
 Saurabh
-=IF(Sheet1!A1<>Sheet2!A1, Sheet2!A1, Sheet1!A1)
