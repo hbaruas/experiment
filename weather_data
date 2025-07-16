@@ -31,44 +31,18 @@ df.to_csv(output_csv, index=False)
 
 print(f"✅ CSV saved to: {output_csv}")
 
+Hi Rhys,
 
-library(readr)
-library(dplyr)
+Thanks for raising this — happy to clarify.
 
-# Custom rounding function: round to nearest multiple of 5
-round_to_5 <- function(x) {
-  round(x / 5) * 5
-}
+We are processing publicly available job adverts (including job descriptions) purely to identify and quantify how many roles involve data production activities. The purpose is analytical and aimed at understanding broader labour market trends — no attempt is made to extract or store personal contact information from the adverts.
 
-# Load data
-data <- read_csv("your_input_file.csv")  # Replace with actual path
+We do not use or retain names, email addresses, phone numbers, or any other identifying fields. Furthermore, the analysis does not link adverts to specific individuals or organisations. The results are aggregated and used only to derive high-level insights, such as the share of roles contributing to data creation across sectors or regions.
 
-# Step 1: Round monthly values BEFORE aggregation
-data <- data %>%
-  mutate(across(where(is.numeric), round_to_5))
+Even in cases where a job title might appear specific (e.g. a rare role such as a Data Protection Officer), the outputs are anonymised and summarised at occupational or industry levels, with no potential for re-identification.
 
-# Step 2: Replace blank or NA soc_4_digit_code with "Unknown"
-data <- data %>%
-  mutate(soc_4_digit_code = ifelse(is.na(soc_4_digit_code) | soc_4_digit_code == "", "Unknown", as.character(soc_4_digit_code)))
+Please let me know if a DPIA is needed, though we believe this sits well within low-risk processing with no personal data retained.
 
-# Step 3: Aggregate at UK level
-uk_summary <- data %>%
-  select(-region_label) %>%
-  group_by(soc_4_digit_code, soc_4_digit_label) %>%
-  summarise(across(where(is.numeric), sum, na.rm = TRUE), .groups = "drop")
-
-# Step 4: Add "Country" column and reorder
-uk_summary <- uk_summary %>%
-  mutate(Country = "Total UK") %>%
-  select(Country, everything())
-
-# View result
-print(head(uk_summary))
-
-# Optional: write to CSV
-# write_csv(uk_summary, "UK_aggregated_rounded_first.csv")
-# Optionally write to CSV
-# write_csv(uk_summary, "UK_aggregated_rounded.csv")
-
-
+Best regards,
+Saurabh
 =IF(Sheet1!A1<>Sheet2!A1, Sheet2!A1, Sheet1!A1)
