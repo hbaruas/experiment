@@ -32,34 +32,13 @@ df.to_csv(output_csv, index=False)
 One-to-One Feedback – Talking Points for Ayoola
 📝 ServiceNow Request Template (Final Version for DAP & Artifactory)
 
-Short Description:
 
-Request to install en_core_web_md and en_core_web_lg spaCy NLP models in DAP and make available via Artifactory.
+en_core_web_md (Medium model, 3.7.1)
+	•	Hugging Face page: https://huggingface.co/spacy/en_core_web_md
+	•	Direct .whl file: https://huggingface.co/spacy/en_core_web_md/resolve/main/en_core_web_md-any-py3-none-any.whl
 
-Description:
+en_core_web_lg (Large model, 3.7.1)
+	•	Hugging Face page: https://huggingface.co/spacy/en_core_web_lg
+	•	Direct .whl file: https://huggingface.co/spacy/en_core_web_lg/resolve/main/en_core_web_lg-any-py3-none-any.whl
 
-Hello,
-
-I would like to request installation of the following spaCy NLP models into the DAP environment and have them made available through Artifactory for internal use:
-	1.	Model: en_core_web_md
-	•	Version: 3.7.1
-	•	Source: Hugging Face
-	•	Direct .whl: https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.7.1/en_core_web_md-3.7.1-py3-none-any.whl
-	2.	Model: en_core_web_lg
-	•	Version: 3.7.1
-	•	Source: Hugging Face
-	•	Direct .whl: https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
-
-⸻
-
-Request Details:
-	•	Installation location: DAP
-	•	Access method: Internal Artifactory
-	•	Python version in DAP: [e.g., 3.10]
-	•	Dependencies: Requires compatible spaCy version (e.g., spacy>=3.7.0)
-	•	Security/License status: These are open-source models from Explosion AI
-	•	Purpose: Used in NLP tasks such as Named Entity Recognition (NER), POS tagging, dependency parsing
-	•	Artifactory Path Suggestion:
-[your-org]/python-models/spacy/en_core_web_md
-[your-org]/python-models/spacy/en_core_web_lg
 
