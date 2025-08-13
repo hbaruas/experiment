@@ -41,4 +41,5 @@ en_core_web_lg (Large model, 3.7.1)
 	•	Hugging Face page: https://huggingface.co/spacy/en_core_web_lg
 	•	Direct .whl file: https://huggingface.co/spacy/en_core_web_lg/resolve/main/en_core_web_lg-any-py3-none-any.whl
 
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 
