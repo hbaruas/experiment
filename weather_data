@@ -43,3 +43,53 @@ en_core_web_lg (Large model, 3.7.1)
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
 
+
+
+
+from pathlib import Path
+
+# Font Awesome CDN to inject
+FA_CDN = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">'
+
+def get_local_site_path():
+    """Find the local_site folder relative to this script."""
+    here = Path(__file__).resolve()
+    root = here.parent
+    gx_path = root / "great_expectations" / "uncommitted" / "data_docs" / "local_site"
+    if not gx_path.exists():
+        print(f"❌ Could not find: {gx_path}")
+        exit(1)
+    return gx_path
+
+def patch_html_file(file_path: Path):
+    """Inject FA link if not already present."""
+    try:
+        text = file_path.read_text(encoding="utf-8")
+        if FA_CDN in text:
+            return False  # Already patched
+        # Insert FA just after <head>
+        patched_text = text.replace("<head>", f"<head>\n    {FA_CDN}")
+        file_path.write_text(patched_text, encoding="utf-8")
+        return True
+    except Exception as e:
+        print(f"❌ Error patching {file_path}: {e}")
+        return False
+
+def patch_all_docs():
+    local_site_path = get_local_site_path()
+    patched_files = 0
+
+    for html_file in local_site_path.rglob("*.html"):
+        if patch_html_file(html_file):
+            print(f"✅ Patched: {html_file.relative_to(local_site_path)}")
+            patched_files += 1
+
+    if patched_files == 0:
+        print("✔️ No changes needed — all files already patched.")
+    else:
+        print(f"🔧 Done — {patched_files} file(s) patched.")
+
+if __name__ == "__main__":
+    patch_all_docs()
+
+
