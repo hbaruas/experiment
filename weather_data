@@ -104,3 +104,11 @@ regional_df = regional_df.rename(columns={'GB': 'Monthly potential redundancies'
 
 # At this point, regional_df contains only the required columns with the new name
 # Not exporting yet, just keeping the DataFrame in memory
+
+
+
+# Combine column-wise (assuming both have same row count and order)
+monthly_record = pd.concat([region.reset_index(drop=True), regional_df.reset_index(drop=True)], axis=1)
+
+# Save as CSV
+monthly_record.to_csv("monthly_record.csv", index=False)
