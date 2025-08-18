@@ -93,3 +93,14 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
+
+
+
+# Keep only 'month' and 'GB' columns
+regional_df = regional_df[['month', 'GB']]
+
+# Rename 'GB' to 'Monthly potential redundancies'
+regional_df = regional_df.rename(columns={'GB': 'Monthly potential redundancies'})
+
+# At this point, regional_df contains only the required columns with the new name
+# Not exporting yet, just keeping the DataFrame in memory
