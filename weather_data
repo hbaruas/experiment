@@ -116,11 +116,8 @@ monthly_record.to_csv("monthly_record.csv", index=False)
 
 
 
-
 =IF(ISNUMBER(new_one!A1)*ISNUMBER(Sheet2!A1),
-     IF(new_one!A1<>Sheet2!A1, Sheet2!A1-new_one!A1, ""),
-     IF(EXACT(Sheet2!A1,new_one!A1),"",Sheet2!A1))
-
-
+ IF(new_one!A1<>Sheet2!A1, Sheet2!A1-new_one!A1, ""),
+ IF(EXACT(Sheet2!A1,new_one!A1),"",Sheet2!A1))
 
 =IF(AND(ISBLANK(A1),ISBLANK(new_one!A1)),FALSE,IFERROR(NOT(EXACT(A1,new_one!A1)),TRUE))
