@@ -93,16 +93,30 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
+from pyspark.sql import SparkSession
 
+# ---- your existing DF ----
+# df = spark.read.parquet("s3a://bucket/path/to/dataset")
 
+# Make sure we use the s3a scheme
+parquet_path = "s3://bucket/path/to/dataset"   # <-- your path
+if parquet_path.startswith("s3://"):
+    parquet_path = "s3a://" + parquet_path[len("s3://"):]
 
-=IF(A1=new_one!A1,"",
-   IF(AND(ISNUMBER(A1),ISNUMBER(new_one!A1)),
-      A1-new_one!A1,
-      A1))
+# Rows, cols, names
+rows = df.count()
+cols = len(df.columns)
 
-=IF(ISNUMBER(new_one!A1)*ISNUMBER(Sheet2!A1),
- IF(new_one!A1<>Sheet2!A1, Sheet2!A1-new_one!A1, ""),
- IF(EXACT(Sheet2!A1,new_one!A1),"",Sheet2!A1))
+print(f"Total Rows    : {rows}")
+print(f"Total Columns : {cols}")
+print("Column Names  :")
+for i, c in enumerate(df.columns, 1):
+    print(f"  {i:>3}. {c}")
 
-=IF(AND(ISBLANK(A1),ISBLANK(new_one!A1)),FALSE,IFERROR(NOT(EXACT(A1,new_one!A1)),TRUE))
+# Total size (bytes) of all files under the S3 prefix
+hc = spark._jsc.hadoopConfiguration()
+fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hc)
+p = spark._jvm.org.apache.hadoop.fs.Path(parquet_path)
+total_bytes = fs.getContentSummary(p).getLength()
+
+print(f"Parquet size  : {total_bytes/1024/1024:.2f} MB")
