@@ -93,17 +93,47 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
-from pyspark.sql import SparkSession
+def path_size_bytes(path: str) -> int:
+    """
+    Returns total bytes under the given path (recursive).
+    Works for s3a://, hdfs://, file://, dbfs:/ (if backed by S3A on the JVM).
+    """
+    # Normalize schemes (allow 's3://' -> 's3a://')
+    if path.startswith("s3://"):
+        path = "s3a://" + path[len("s3://"):]
+    # Hadoop handles 'file:/', 'hdfs://', 's3a://', 'dbfs:/...' (on Databricks)
 
-# ---- your existing DF ----
-# df = spark.read.parquet("s3a://bucket/path/to/dataset")
+    hc   = spark._jsc.hadoopConfiguration()
+    Path = spark._jvm.org.apache.hadoop.fs.Path
+    p    = Path(path)
 
-# Make sure we use the s3a scheme
-parquet_path = "s3://bucket/path/to/dataset"   # <-- your path
-if parquet_path.startswith("s3://"):
-    parquet_path = "s3a://" + parquet_path[len("s3://"):]
+    # Ensure the S3A implementation is set (often already set on EMR/Databricks)
+    if hc.get("fs.s3a.impl") is None:
+        hc.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        # credentials provider chain (IAM role, env, instance profile, etc.)
+        if hc.get("fs.s3a.aws.credentials.provider") is None:
+            hc.set("fs.s3a.aws.credentials.provider",
+                   "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
 
-# Rows, cols, names
+    # Get FS for THIS URI (avoids 'Wrong FS: s3a://...')
+    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hc)
+
+    try:
+        # Fast path: ContentSummary (recursive)
+        return int(fs.getContentSummary(p).getLength())
+    except Exception as e:
+        # Some object stores may not support ContentSummary on prefixes.
+        # Fallback: list files recursively and sum sizes.
+        it = fs.listFiles(p, True)  # recursive
+        total = 0
+        while it.hasNext():
+            status = it.next()
+            # skip directories if any are reported
+            if not status.isDirectory():
+                total += status.getLen()
+        return total
+
+# ---------- Example usage ----------
 rows = df.count()
 cols = len(df.columns)
 
@@ -113,10 +143,6 @@ print("Column Names  :")
 for i, c in enumerate(df.columns, 1):
     print(f"  {i:>3}. {c}")
 
-# Total size (bytes) of all files under the S3 prefix
-hc = spark._jsc.hadoopConfiguration()
-fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hc)
-p = spark._jvm.org.apache.hadoop.fs.Path(parquet_path)
-total_bytes = fs.getContentSummary(p).getLength()
-
+parquet_path = "s3a://your-bucket/path/to/dataset"  # <-- your S3A path
+total_bytes  = path_size_bytes(parquet_path)
 print(f"Parquet size  : {total_bytes/1024/1024:.2f} MB")
