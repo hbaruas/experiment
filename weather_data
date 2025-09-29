@@ -93,56 +93,61 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
-def path_size_bytes(path: str) -> int:
+from collections import defaultdict
+
+def partition_sizes_s3a(root_path: str):
     """
-    Returns total bytes under the given path (recursive).
-    Works for s3a://, hdfs://, file://, dbfs:/ (if backed by S3A on the JVM).
+    Return (sizes_by_partition_dir, total_bytes).
+    Works for s3a:// (and hdfs://, file://, dbfs:/ when backed by S3A).
     """
-    # Normalize schemes (allow 's3://' -> 's3a://')
-    if path.startswith("s3://"):
-        path = "s3a://" + path[len("s3://"):]
-    # Hadoop handles 'file:/', 'hdfs://', 's3a://', 'dbfs:/...' (on Databricks)
+    # normalize s3 -> s3a
+    if root_path.startswith("s3://"):
+        root_path = "s3a://" + root_path[len("s3://"):]
 
     hc   = spark._jsc.hadoopConfiguration()
     Path = spark._jvm.org.apache.hadoop.fs.Path
-    p    = Path(path)
+    p    = Path(root_path)
 
-    # Ensure the S3A implementation is set (often already set on EMR/Databricks)
+    # Ensure S3A is wired (often already set on managed clusters)
     if hc.get("fs.s3a.impl") is None:
         hc.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        # credentials provider chain (IAM role, env, instance profile, etc.)
         if hc.get("fs.s3a.aws.credentials.provider") is None:
             hc.set("fs.s3a.aws.credentials.provider",
                    "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
 
-    # Get FS for THIS URI (avoids 'Wrong FS: s3a://...')
-    fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hc)
+    # FS bound to the path’s URI (avoids "Wrong FS: s3a://" errors)
+    fs  = spark._jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hc)
 
-    try:
-        # Fast path: ContentSummary (recursive)
-        return int(fs.getContentSummary(p).getLength())
-    except Exception as e:
-        # Some object stores may not support ContentSummary on prefixes.
-        # Fallback: list files recursively and sum sizes.
-        it = fs.listFiles(p, True)  # recursive
-        total = 0
-        while it.hasNext():
-            status = it.next()
-            # skip directories if any are reported
-            if not status.isDirectory():
-                total += status.getLen()
-        return total
+    it = fs.listFiles(p, True)  # recursive
+    sizes = defaultdict(int)
+    total = 0
 
-# ---------- Example usage ----------
-rows = df.count()
-cols = len(df.columns)
+    while it.hasNext():
+        status = it.next()
+        if status.isFile():
+            file_path = status.getPath()
+            parent    = file_path.getParent()     # partition directory
+            size      = status.getLen()
 
-print(f"Total Rows    : {rows}")
-print(f"Total Columns : {cols}")
-print("Column Names  :")
-for i, c in enumerate(df.columns, 1):
-    print(f"  {i:>3}. {c}")
+            # (Optional) only count data parts; skip Spark control files
+            name = file_path.getName()
+            if name.startswith("_") or name.startswith("."):
+                continue
 
-parquet_path = "s3a://your-bucket/path/to/dataset"  # <-- your S3A path
-total_bytes  = path_size_bytes(parquet_path)
-print(f"Parquet size  : {total_bytes/1024/1024:.2f} MB")
+            sizes[parent.toString()] += size
+            total += size
+
+    return dict(sizes), total
+
+# ---- Use it ----
+root = "s3a://your-bucket/path/to/dataset"   # <-- your dataset prefix
+sizes_by_part, total_bytes = partition_sizes_s3a(root)
+
+# Print partitions (sorted by path)
+for part_path in sorted(sizes_by_part):
+    mb = sizes_by_part[part_path] / (1024*1024)
+    gb = sizes_by_part[part_path] / (1024*1024*1024)
+    print(f"{part_path}  ->  {mb:.2f} MB  ({gb:.3f} GB)")
+
+print("-" * 72)
+print(f"TOTAL: {total_bytes/(1024*1024):.2f} MB  ({total_bytes/(1024*1024*1024):.3f} GB)")
