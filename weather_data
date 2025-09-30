@@ -93,82 +93,81 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
-from pyspark.sql import functions as F
-from pyspark.sql import types as T
-from datetime import datetime
 
-# ----------------- CONFIGURE THESE -----------------
-SOURCE_PARQUET = "s3a://your-bucket/path/to/parquet_root"
-DATE_COL       = "date"                      # your date column name
+
+
+from pyspark.sql import functions as F, types as T
+
+SOURCE_PARQUET = "s3a://bucket/path/to/parquet_root"
+OUT_PREFIX     = "s3a://bucket/path/to/exports"
+DATE_COL       = "date"
 KEEP_COLS      = ["date", "job_id", "job_title", "full_text"]
+START_DATE     = "2019-06-01"
+END_DATE       = "2019-06-30"
 
-START_DATE     = "2019-06-01"                # inclusive
-END_DATE       = "2019-06-30"                # inclusive
-
-# Where to write the CSV result (NEW prefix so original data is unchanged)
-OUT_PREFIX     = "s3a://your-bucket/path/to/exports"
-# ---------------------------------------------------
-
-# 1) Read the dataset
+# 1) Read source
 df = spark.read.parquet(SOURCE_PARQUET)
 
-# 2) Parse/normalize the date column to real DATE type (robust to a few formats)
-#    We'll try several common formats and fall back if it's already DateType.
-fmt_attempts = [
-    "yyyy-MM-dd", "yyyy/MM/dd", "dd-MM-yyyy", "dd/MM/yyyy",
-    "yyyyMMdd", "MM-dd-yyyy", "MM/dd/yyyy"
-]
+# 2) Normalize/parse date to real DateType (safe if it's already date)
+df2 = df.withColumn("__date",
+    F.coalesce(
+        F.col(DATE_COL).cast(T.DateType()),
+        F.to_date(F.col(DATE_COL), "yyyy-MM-dd"),   # adjust/add formats if needed
+        F.to_date(F.col(DATE_COL))
+    )
+)
 
-if dict(df.dtypes)[DATE_COL] == 'date':
-    df_with_date = df.withColumn("__date", F.col(DATE_COL).cast(T.DateType()))
-else:
-    parsed = None
-    for fmt in fmt_attempts:
-        expr = F.to_date(F.col(DATE_COL), fmt)
-        parsed = expr if parsed is None else F.coalesce(parsed, expr)
-    # if everything failed, to_date without format (last resort)
-    parsed = F.coalesce(parsed, F.to_date(F.col(DATE_COL)))
-    df_with_date = df.withColumn("__date", parsed)
+# 3) Filter by inclusive range
+filtered = df2.filter(F.col("__date").between(F.lit(START_DATE).cast(T.DateType()),
+                                              F.lit(END_DATE).cast(T.DateType())))
 
-# 3) Filter by the date range (inclusive)
-start_lit = F.lit(START_DATE).cast(T.DateType())
-end_lit   = F.lit(END_DATE).cast(T.DateType())
-filtered  = df_with_date.filter(F.col("__date").between(start_lit, end_lit))
+# 4) Select columns
+result = filtered.select(*[c for c in KEEP_COLS if c in filtered.columns])
 
-# 4) Select required columns (keeping original 'date' as-is)
-available = [c for c in KEEP_COLS if c in filtered.columns]
-missing   = [c for c in KEEP_COLS if c not in filtered.columns]
-if missing:
-    print("Warning: these expected columns are missing:", missing)
+# 5) Count rows returned
+cnt = result.count()
+print(f"Rows fetched in range [{START_DATE} .. {END_DATE}]: {cnt}")
 
-result = filtered.select(*available)
-
-# 5) Count the rows returned
-row_count = result.count()
-print(f"Rows fetched in range [{START_DATE} .. {END_DATE}] : {row_count}")
-
-# 6) Write to CSV on S3A under a NEW timestamped subfolder (original parquet untouched)
+# 6) Write CSV safely to S3A (original parquet untouched)
+#    - quoteAll=True ensures EVERY field is quoted (handles commas/newlines)
+#    - quote='"' and escape='"' means embedded quotes become doubled ("") per RFC 4180
+from datetime import datetime
 stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
 out_path = f"{OUT_PREFIX.rstrip('/')}/date_range={START_DATE}_to_{END_DATE}_{stamp}"
 
-# NOTE:
-# - header=True for column names
-# - repartition(1) if you really want a single CSV file (can be slow/large)
-#   Otherwise, keep the natural parallelism.
 (result
-    # .repartition(1)                     # <-- uncomment for a single CSV file
-    .write
-    .mode("overwrite")
-    .option("header", "true")
-    .csv(out_path)
+  # .repartition(1)  # uncomment if you truly want a single file
+  .write
+  .mode("overwrite")
+  .option("header", True)
+  .option("quote", '"')
+  .option("escape", '"')
+  .option("quoteAll", True)      # <-- key for reliable round-trip with newlines
+  .option("lineSep", "\n")       # normalize line endings
+  .csv(out_path)
 )
 
 print("CSV written to:", out_path)
 
-# 7) Read it back to confirm
-read_back = (spark.read
-             .option("header", "true")
-             .csv(out_path))
+# 7) Read back with the SAME options + explicit schema
+csv_schema = T.StructType([
+    T.StructField("date",      T.StringType(), True),
+    T.StructField("job_id",    T.StringType(), True),
+    T.StructField("job_title", T.StringType(), True),
+    T.StructField("full_text", T.StringType(), True),
+])
 
-print("Read-back row count:", read_back.count())
+read_back = (spark.read
+    .option("header", True)
+    .option("quote", '"')
+    .option("escape", '"')
+    .option("quoteAll", True)    # harmless on read; keeps behavior consistent
+    .option("multiLine", True)   # <-- allows embedded newlines in quoted fields
+    .option("mode", "PERMISSIVE")
+    .schema(csv_schema)
+    .csv(out_path)
+    .withColumn("date", F.to_date("date", "yyyy-MM-dd"))
+)
+
+print("Read-back rows:", read_back.count())
 read_back.show(5, truncate=False)
