@@ -171,3 +171,21 @@ read_back = (spark.read
 
 print("Read-back rows:", read_back.count())
 read_back.show(5, truncate=False)
+
+
+
+
+from pyspark.sql import SparkSession
+
+parquet_path = "s3a://your-bucket/path/to/exports/date_range=2019-06-01_to_2019-06-30_20250930T142000Z"
+
+hc   = spark._jsc.hadoopConfiguration()
+Path = spark._jvm.org.apache.hadoop.fs.Path
+p    = Path(parquet_path)
+
+# Get correct FS for this URI (avoids "Wrong FS" errors)
+fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hc)
+
+# Recursively delete that directory
+fs.delete(p, True)   # True = recursive
+print("Deleted:", parquet_path)
