@@ -93,61 +93,82 @@ if __name__ == "__main__":
     patch_all_docs()
 
 
-from collections import defaultdict
+from pyspark.sql import functions as F
+from pyspark.sql import types as T
+from datetime import datetime
 
-def partition_sizes_s3a(root_path: str):
-    """
-    Return (sizes_by_partition_dir, total_bytes).
-    Works for s3a:// (and hdfs://, file://, dbfs:/ when backed by S3A).
-    """
-    # normalize s3 -> s3a
-    if root_path.startswith("s3://"):
-        root_path = "s3a://" + root_path[len("s3://"):]
+# ----------------- CONFIGURE THESE -----------------
+SOURCE_PARQUET = "s3a://your-bucket/path/to/parquet_root"
+DATE_COL       = "date"                      # your date column name
+KEEP_COLS      = ["date", "job_id", "job_title", "full_text"]
 
-    hc   = spark._jsc.hadoopConfiguration()
-    Path = spark._jvm.org.apache.hadoop.fs.Path
-    p    = Path(root_path)
+START_DATE     = "2019-06-01"                # inclusive
+END_DATE       = "2019-06-30"                # inclusive
 
-    # Ensure S3A is wired (often already set on managed clusters)
-    if hc.get("fs.s3a.impl") is None:
-        hc.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        if hc.get("fs.s3a.aws.credentials.provider") is None:
-            hc.set("fs.s3a.aws.credentials.provider",
-                   "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+# Where to write the CSV result (NEW prefix so original data is unchanged)
+OUT_PREFIX     = "s3a://your-bucket/path/to/exports"
+# ---------------------------------------------------
 
-    # FS bound to the path’s URI (avoids "Wrong FS: s3a://" errors)
-    fs  = spark._jvm.org.apache.hadoop.fs.FileSystem.get(p.toUri(), hc)
+# 1) Read the dataset
+df = spark.read.parquet(SOURCE_PARQUET)
 
-    it = fs.listFiles(p, True)  # recursive
-    sizes = defaultdict(int)
-    total = 0
+# 2) Parse/normalize the date column to real DATE type (robust to a few formats)
+#    We'll try several common formats and fall back if it's already DateType.
+fmt_attempts = [
+    "yyyy-MM-dd", "yyyy/MM/dd", "dd-MM-yyyy", "dd/MM/yyyy",
+    "yyyyMMdd", "MM-dd-yyyy", "MM/dd/yyyy"
+]
 
-    while it.hasNext():
-        status = it.next()
-        if status.isFile():
-            file_path = status.getPath()
-            parent    = file_path.getParent()     # partition directory
-            size      = status.getLen()
+if dict(df.dtypes)[DATE_COL] == 'date':
+    df_with_date = df.withColumn("__date", F.col(DATE_COL).cast(T.DateType()))
+else:
+    parsed = None
+    for fmt in fmt_attempts:
+        expr = F.to_date(F.col(DATE_COL), fmt)
+        parsed = expr if parsed is None else F.coalesce(parsed, expr)
+    # if everything failed, to_date without format (last resort)
+    parsed = F.coalesce(parsed, F.to_date(F.col(DATE_COL)))
+    df_with_date = df.withColumn("__date", parsed)
 
-            # (Optional) only count data parts; skip Spark control files
-            name = file_path.getName()
-            if name.startswith("_") or name.startswith("."):
-                continue
+# 3) Filter by the date range (inclusive)
+start_lit = F.lit(START_DATE).cast(T.DateType())
+end_lit   = F.lit(END_DATE).cast(T.DateType())
+filtered  = df_with_date.filter(F.col("__date").between(start_lit, end_lit))
 
-            sizes[parent.toString()] += size
-            total += size
+# 4) Select required columns (keeping original 'date' as-is)
+available = [c for c in KEEP_COLS if c in filtered.columns]
+missing   = [c for c in KEEP_COLS if c not in filtered.columns]
+if missing:
+    print("Warning: these expected columns are missing:", missing)
 
-    return dict(sizes), total
+result = filtered.select(*available)
 
-# ---- Use it ----
-root = "s3a://your-bucket/path/to/dataset"   # <-- your dataset prefix
-sizes_by_part, total_bytes = partition_sizes_s3a(root)
+# 5) Count the rows returned
+row_count = result.count()
+print(f"Rows fetched in range [{START_DATE} .. {END_DATE}] : {row_count}")
 
-# Print partitions (sorted by path)
-for part_path in sorted(sizes_by_part):
-    mb = sizes_by_part[part_path] / (1024*1024)
-    gb = sizes_by_part[part_path] / (1024*1024*1024)
-    print(f"{part_path}  ->  {mb:.2f} MB  ({gb:.3f} GB)")
+# 6) Write to CSV on S3A under a NEW timestamped subfolder (original parquet untouched)
+stamp = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+out_path = f"{OUT_PREFIX.rstrip('/')}/date_range={START_DATE}_to_{END_DATE}_{stamp}"
 
-print("-" * 72)
-print(f"TOTAL: {total_bytes/(1024*1024):.2f} MB  ({total_bytes/(1024*1024*1024):.3f} GB)")
+# NOTE:
+# - header=True for column names
+# - repartition(1) if you really want a single CSV file (can be slow/large)
+#   Otherwise, keep the natural parallelism.
+(result
+    # .repartition(1)                     # <-- uncomment for a single CSV file
+    .write
+    .mode("overwrite")
+    .option("header", "true")
+    .csv(out_path)
+)
+
+print("CSV written to:", out_path)
+
+# 7) Read it back to confirm
+read_back = (spark.read
+             .option("header", "true")
+             .csv(out_path))
+
+print("Read-back row count:", read_back.count())
+read_back.show(5, truncate=False)
