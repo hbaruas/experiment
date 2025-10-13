@@ -1,1 +1,1 @@
-
+git show -s --format='%ci %d' $(git rev-list --tags --max-count=1)
