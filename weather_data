@@ -1,1 +1,1 @@
-git show -s --format='%ci %d' $(git rev-list --tags --max-count=1)
+git for-each-ref --sort=creatordate --format='%(creatordate:short)  %(refname:short)' refs/tags
