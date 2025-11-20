@@ -1,1 +1,251 @@
-git for-each-ref --sort=creatordate --format='%(creatordate:short)  %(refname:short)' refs/tags
+## 6. OECD-style Data Intensity and Occupation Summary (SOC-based)
+
+In this step we mirror the core methodology of the OECD paper using our Textkernel–SOC data:
+
+1. Start from the **reduced noun-chunk file** for each year  
+   (`noun_chunk`, `doc_JobID`, `doc_BGTOcc`, `avg_sim`, `count`).
+
+2. Compute, for each chunk and occupation:
+   - `Count_byNoun` – total count of the chunk in the corpus  
+   - `Count_byOcc` – total chunk count within each SOC  
+   - `Count_byNounOcc` – count of the chunk within each SOC  
+   - `Share_byNounOcc = Count_byNounOcc / Count_byOcc`  
+   - `Share_byNoun   = Count_byNoun   / Count_Total`  
+   - `relative_frequency = Share_byNounOcc / Share_byNoun`
+
+3. Define **SOC-based landmark occupations** for three “layers”:
+   - **Data entry** (e.g. SOC 4152 – data entry / admin type roles)  
+   - **Database / infrastructure** (e.g. SOC 2136/2137/2133 – software / web / IT specialist)  
+   - **Data analytics** (e.g. SOC 2425/2135 – statisticians, economists, IT business analysts)
+
+4. For each layer, select noun chunks that:
+   - appear in jobs whose SOC is in that layer’s landmark list,  
+   - have cosine similarity to “data” above a high threshold,  
+   - and have a relative frequency above a dispersion cutoff.
+
+   This produces a **chunk dictionary**:  
+   `noun_chunk → {data_entry | database | data_analytics}`  
+   Each chunk is assigned to whichever layer it is most characteristic of.
+
+5. Apply this dictionary back to **all jobs**:
+   - count how many chunks in each job belong to each layer,  
+   - compute the total number of “data-related” chunks per job,  
+   - mark jobs as **data-intensive** if they have at least `DATA_THRESHOLD` chunks,  
+   - and, for those jobs, convert raw counts into **shares**:
+     - `data_entry_share`, `database_share`, `data_analytics_share`.
+
+6. Aggregate to **occupation level** by SOC:
+   - average the job-level shares within each SOC,  
+   - and compute an overall `Data_Intensity = data_entry_share + database_share + data_analytics_share`.
+
+This gives us an occupation-level map of **how “data-heavy” each SOC is**, and how the balance between data entry, database, and analytics work differs across occupations and years.
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+# --- Core parameters (OECD-style) ---
+DATA_THRESHOLD = 3          # at least 3 data-related chunks to be data-intensive
+SIM_DATA_THRESHOLD = 0.5    # high similarity threshold to "data"
+REL_SHARE = 10.0            # relative-frequency cutoff (UK-style), tweak if needed
+
+# --- SOC2020 landmark occupation lists (4-digit SOC codes as strings) ---
+# These are *starting points* – you should refine/expand with ONS taxonomy experts if needed.
+data_entry_soc = {
+    '4152',   # data entry / administrative-type roles
+}
+
+database_soc = {
+    '2136',   # programmers and software development professionals
+    '2137',   # web design and development professionals
+    '2133',   # IT specialist managers (db / infra management often here)
+}
+
+data_analytics_soc = {
+    '2425',   # actuaries, economists and statisticians
+    '2135',   # IT business analysts, architects and systems designers
+}
+
+for yr in tqdm(years_to_process, desc='Classifying jobs (OECD-style)'):
+    print(f'Classifying jobs for {yr}...')
+    red_path = ALL_PATHS[yr]['reduced_data']
+    reduced = spark.read.parquet(red_path)
+
+    # Align column names with the OECD logic: sim_data and counter
+    frame = (
+        reduced
+        .withColumnRenamed('avg_sim', 'sim_data')
+        .withColumnRenamed('count', 'counter')
+    )
+
+    # ---------- Dispersion / relative-frequency ----------
+    noun_totals = frame.groupBy('noun_chunk').agg(
+        F.sum('counter').alias('Count_byNoun')
+    )
+    occ_totals = frame.groupBy('doc_BGTOcc').agg(
+        F.sum('counter').alias('Count_byOcc')
+    )
+    noun_occ_totals = frame.groupBy('noun_chunk', 'doc_BGTOcc').agg(
+        F.sum('counter').alias('Count_byNounOcc')
+    )
+
+    total_count = noun_totals.agg(
+        F.sum('Count_byNoun').alias('total')
+    ).collect()[0]['total']
+
+    frame_enriched = (
+        frame
+        .join(noun_totals, 'noun_chunk', 'left')
+        .join(occ_totals, 'doc_BGTOcc', 'left')
+        .join(noun_occ_totals, ['noun_chunk', 'doc_BGTOcc'], 'left')
+        .withColumn('Count_Total', F.lit(total_count))
+        .withColumn('Share_byNounOcc', F.col('Count_byNounOcc') / F.col('Count_byOcc'))
+        .withColumn('Share_byNoun',    F.col('Count_byNoun')    / F.col('Count_Total'))
+        .withColumn('relative_frequency', F.col('Share_byNounOcc') / F.col('Share_byNoun'))
+    )
+
+    # Derive 4-digit SOC code
+    frame_enriched = frame_enriched.withColumn('soc4', F.substring('doc_BGTOcc', 1, 4))
+
+    base_filter = (
+        (F.col('sim_data') >= SIM_DATA_THRESHOLD) &
+        (F.col('relative_frequency') >= REL_SHARE)
+    )
+
+    # ---------- Landmark-based chunk selection per layer ----------
+    entry_words = (
+        frame_enriched
+        .filter(base_filter & F.col('soc4').isin(list(data_entry_soc)))
+        .select('noun_chunk', 'Share_byNounOcc')
+        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
+        .withColumn('Type', F.lit('data_entry'))
+    )
+
+    ana_words = (
+        frame_enriched
+        .filter(base_filter & F.col('soc4').isin(list(data_analytics_soc)))
+        .select('noun_chunk', 'Share_byNounOcc')
+        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
+        .withColumn('Type', F.lit('data_analytics'))
+    )
+
+    db_words = (
+        frame_enriched
+        .filter(base_filter & F.col('soc4').isin(list(database_soc)))
+        .select('noun_chunk', 'Share_byNounOcc')
+        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
+        .withColumn('Type', F.lit('database'))
+    )
+
+    words = entry_words.unionByName(ana_words).unionByName(db_words)
+
+    # Ensure each chunk belongs to exactly one layer: keep the layer with max Share_byNounOcc
+    w = Window.partitionBy('noun_chunk')
+    word_fin = (
+        words
+        .withColumn('max_share', F.max('Share_byNounOcc').over(w))
+        .where(F.col('Share_byNounOcc') == F.col('max_share'))
+        .select('noun_chunk', 'Type')
+        .dropDuplicates(['noun_chunk'])
+    )
+
+    # ---------- Apply chunk dictionary back to all jobs ----------
+    frame_labeled = (
+        frame_enriched
+        .join(word_fin, on='noun_chunk', how='left')
+        .withColumn('data_entry',      F.when(F.col('Type') == 'data_entry',      1).otherwise(0))
+        .withColumn('database',        F.when(F.col('Type') == 'database',        1).otherwise(0))
+        .withColumn('data_analytics',  F.when(F.col('Type') == 'data_analytics',  1).otherwise(0))
+    )
+
+    # ---------- Job-level aggregation ----------
+    df_job = (
+        frame_labeled
+        .groupBy('doc_JobID', 'doc_BGTOcc')
+        .agg(
+            F.mean('sim_data').alias('sim_data_mean'),
+            F.sum('data_entry').alias('data_entry'),
+            F.sum('database').alias('database'),
+            F.sum('data_analytics').alias('data_analytics'),
+            F.count('noun_chunk').alias('chunk_count')
+        )
+    )
+
+    df_job = df_job.withColumn(
+        'Count_DataTerms',
+        F.col('data_entry') + F.col('database') + F.col('data_analytics')
+    )
+
+    # Convert raw counts into shares for jobs that are data-intensive (>= DATA_THRESHOLD chunks).
+    df_job = (
+        df_job
+        .withColumn(
+            'data_entry',
+            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
+                   F.col('data_entry') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
+        )
+        .withColumn(
+            'database',
+            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
+                   F.col('database') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
+        )
+        .withColumn(
+            'data_analytics',
+            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
+                   F.col('data_analytics') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
+        )
+        .withColumn(
+            'is_data_intensive',
+            (F.col('Count_DataTerms') >= DATA_THRESHOLD)
+        )
+    )
+
+    # Save job-level results
+    jc_path = ALL_PATHS[yr]['job_categories']
+    df_job.write.mode('overwrite').parquet(jc_path)
+
+    # ---------- Occupation-level summary ----------
+    occ_summary = (
+        df_job
+        .groupBy('doc_BGTOcc')
+        .agg(
+            F.count('*').alias('total_jobs'),
+            F.sum(F.col('is_data_intensive').cast('int')).alias('data_intensive_jobs'),
+            (F.mean('data_entry') * 100.0).alias('data_entry_share'),
+            (F.mean('database') * 100.0).alias('database_share'),
+            (F.mean('data_analytics') * 100.0).alias('data_analytics_share')
+        )
+    )
+
+    os_path = ALL_PATHS[yr]['occupation_summary']
+    occ_summary.write.mode('overwrite').parquet(os_path)
+    print(f'\tSaved job-level data to {jc_path} and occupation summary to {os_path}')
+
+
+
+
+
+
+# Count aggregate contribution of each data layer across occupations
+counts = {
+    'data_entry': occupation_df['data_entry_share'].sum(),
+    'database': occupation_df['database_share'].sum(),
+    'data_analytics': occupation_df['data_analytics_share'].sum(),
+}
+
+fig_cat = px.pie(
+    names=list(counts.keys()),
+    values=list(counts.values()),
+    title='Aggregate contribution of data layers across occupations',
+    height=450
+)
+fig_cat.update_traces(textposition='inside', textinfo='percent+label')
+fig_cat.show()
