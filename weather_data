@@ -249,3 +249,99 @@ fig_cat = px.pie(
 )
 fig_cat.update_traces(textposition='inside', textinfo='percent+label')
 fig_cat.show()
+
+
+
+
+
+
+from pyspark.sql import DataFrame
+from pyspark.sql import functions as F
+
+# -----------------------------
+# Sampling configuration
+# -----------------------------
+# Set SAMPLE_FRACTION to e.g. 0.1 for 10% of each year's data.
+# Set it to None or 1.0 to use 100% of the data.
+SAMPLE_FRACTION = 0.10   # 10% per year
+SAMPLE_SEED = 42         # for reproducibility
+
+# Dictionary to hold DataFrames per year
+all_data = {}
+total_jobs = 0
+
+if PARQUET_PATH:
+    # Validate Parquet path within OECD_DATA
+    validate_oecd_path(PARQUET_PATH)
+    print(f'Loading unified Parquet dataset from {PARQUET_PATH}...')
+    full_df = spark.read.parquet(PARQUET_PATH)
+    full_df = full_df.withColumn('date', F.to_date('date'))
+
+    for yr in tqdm(years_to_process, desc='Reading data (Parquet)'):
+        year_df = full_df.filter(F.year('date') == yr)
+
+        # Select and clean relevant columns
+        year_df = (
+            year_df.select(
+                'date',
+                'job_id',
+                'soc_2020',
+                'job_title',
+                F.col('full_text').cast('string'),
+            )
+            .filter(F.col('full_text').isNotNull() & (F.length('full_text') > 0))
+        )
+
+        # Apply sampling if requested
+        if SAMPLE_FRACTION is not None and 0 < SAMPLE_FRACTION < 1:
+            year_df = year_df.sample(
+                withReplacement=False,
+                fraction=SAMPLE_FRACTION,
+                seed=SAMPLE_SEED
+            )
+            print(f'\tApplying {SAMPLE_FRACTION*100:.1f}% sample for {yr}...')
+
+        year_df = year_df.withColumn('date', F.to_date('date', 'yyyy-MM-dd'))
+        count = year_df.count()
+        total_jobs += count
+        all_data[yr] = year_df
+        print(f'Year {yr}: {count:,} sampled records')
+
+else:
+    for yr in tqdm(years_to_process, desc='Reading data (CSV)'):
+        print(f'Loading CSV data for year {yr}...')
+        df = (
+            spark.read
+            .option('header', True)
+            .option('multiline', True)
+            .csv(ALL_PATHS[yr]['input_csv'])
+        )
+
+        df = (
+            df.select(
+                'date',
+                'job_id',
+                'soc_2020',
+                'job_title',
+                F.col('full_text').cast('string'),
+            )
+            .filter(F.col('full_text').isNotNull() & (F.length('full_text') > 0))
+        )
+
+        # Apply sampling if requested
+        if SAMPLE_FRACTION is not None and 0 < SAMPLE_FRACTION < 1:
+            df = df.sample(
+                withReplacement=False,
+                fraction=SAMPLE_FRACTION,
+                seed=SAMPLE_SEED
+            )
+            print(f'\tApplying {SAMPLE_FRACTION*100:.1f}% sample for {yr}...')
+
+        df = df.withColumn('date', F.to_date('date', 'yyyy-MM-dd'))
+        cnt = df.count()
+        total_jobs += cnt
+        all_data[yr] = df
+        print(f'\tRows read (after sampling): {cnt:,}')
+
+print(f'Total jobs loaded (after sampling): {total_jobs:,}')
+print(f'Sampling fraction: {SAMPLE_FRACTION if SAMPLE_FRACTION is not None else 1.0}')
