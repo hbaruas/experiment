@@ -1,443 +1,265 @@
-## 6. OECD-style Data Intensity and Occupation Summary (SOC-based)
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+import os
 
-In this step we mirror the core methodology of the OECD paper using our Textkernel–SOC data:
-
-1. Start from the **reduced noun-chunk file** for each year  
-   (`noun_chunk`, `doc_JobID`, `doc_BGTOcc`, `avg_sim`, `count`).
-
-2. Compute, for each chunk and occupation:
-   - `Count_byNoun` – total count of the chunk in the corpus  
-   - `Count_byOcc` – total chunk count within each SOC  
-   - `Count_byNounOcc` – count of the chunk within each SOC  
-   - `Share_byNounOcc = Count_byNounOcc / Count_byOcc`  
-   - `Share_byNoun   = Count_byNoun   / Count_Total`  
-   - `relative_frequency = Share_byNounOcc / Share_byNoun`
-
-3. Define **SOC-based landmark occupations** for three “layers”:
-   - **Data entry** (e.g. SOC 4152 – data entry / admin type roles)  
-   - **Database / infrastructure** (e.g. SOC 2136/2137/2133 – software / web / IT specialist)  
-   - **Data analytics** (e.g. SOC 2425/2135 – statisticians, economists, IT business analysts)
-
-4. For each layer, select noun chunks that:
-   - appear in jobs whose SOC is in that layer’s landmark list,  
-   - have cosine similarity to “data” above a high threshold,  
-   - and have a relative frequency above a dispersion cutoff.
-
-   This produces a **chunk dictionary**:  
-   `noun_chunk → {data_entry | database | data_analytics}`  
-   Each chunk is assigned to whichever layer it is most characteristic of.
-
-5. Apply this dictionary back to **all jobs**:
-   - count how many chunks in each job belong to each layer,  
-   - compute the total number of “data-related” chunks per job,  
-   - mark jobs as **data-intensive** if they have at least `DATA_THRESHOLD` chunks,  
-   - and, for those jobs, convert raw counts into **shares**:
-     - `data_entry_share`, `database_share`, `data_analytics_share`.
-
-6. Aggregate to **occupation level** by SOC:
-   - average the job-level shares within each SOC,  
-   - and compute an overall `Data_Intensity = data_entry_share + database_share + data_analytics_share`.
-
-This gives us an occupation-level map of **how “data-heavy” each SOC is**, and how the balance between data entry, database, and analytics work differs across occupations and years.
-
-
-
-
-
-
-
-
-
-
-from pyspark.sql import functions as F
-from pyspark.sql.window import Window
-
-# --- Core parameters (OECD-style) ---
-DATA_THRESHOLD = 3          # at least 3 data-related chunks to be data-intensive
-SIM_DATA_THRESHOLD = 0.5    # high similarity threshold to "data"
-REL_SHARE = 10.0            # relative-frequency cutoff (UK-style), tweak if needed
-
-# --- SOC2020 landmark occupation lists (4-digit SOC codes as strings) ---
-# These are *starting points* – you should refine/expand with ONS taxonomy experts if needed.
-data_entry_soc = {
-    '4152',   # data entry / administrative-type roles
-}
-
-database_soc = {
-    '2136',   # programmers and software development professionals
-    '2137',   # web design and development professionals
-    '2133',   # IT specialist managers (db / infra management often here)
-}
-
-data_analytics_soc = {
-    '2425',   # actuaries, economists and statisticians
-    '2135',   # IT business analysts, architects and systems designers
-}
-
-for yr in tqdm(years_to_process, desc='Classifying jobs (OECD-style)'):
-    print(f'Classifying jobs for {yr}...')
-    red_path = ALL_PATHS[yr]['reduced_data']
-    reduced = spark.read.parquet(red_path)
-
-    # Align column names with the OECD logic: sim_data and counter
-    frame = (
-        reduced
-        .withColumnRenamed('avg_sim', 'sim_data')
-        .withColumnRenamed('count', 'counter')
-    )
-
-    # ---------- Dispersion / relative-frequency ----------
-    noun_totals = frame.groupBy('noun_chunk').agg(
-        F.sum('counter').alias('Count_byNoun')
-    )
-    occ_totals = frame.groupBy('doc_BGTOcc').agg(
-        F.sum('counter').alias('Count_byOcc')
-    )
-    noun_occ_totals = frame.groupBy('noun_chunk', 'doc_BGTOcc').agg(
-        F.sum('counter').alias('Count_byNounOcc')
-    )
-
-    total_count = noun_totals.agg(
-        F.sum('Count_byNoun').alias('total')
-    ).collect()[0]['total']
-
-    frame_enriched = (
-        frame
-        .join(noun_totals, 'noun_chunk', 'left')
-        .join(occ_totals, 'doc_BGTOcc', 'left')
-        .join(noun_occ_totals, ['noun_chunk', 'doc_BGTOcc'], 'left')
-        .withColumn('Count_Total', F.lit(total_count))
-        .withColumn('Share_byNounOcc', F.col('Count_byNounOcc') / F.col('Count_byOcc'))
-        .withColumn('Share_byNoun',    F.col('Count_byNoun')    / F.col('Count_Total'))
-        .withColumn('relative_frequency', F.col('Share_byNounOcc') / F.col('Share_byNoun'))
-    )
-
-    # Derive 4-digit SOC code
-    frame_enriched = frame_enriched.withColumn('soc4', F.substring('doc_BGTOcc', 1, 4))
-
-    base_filter = (
-        (F.col('sim_data') >= SIM_DATA_THRESHOLD) &
-        (F.col('relative_frequency') >= REL_SHARE)
-    )
-
-    # ---------- Landmark-based chunk selection per layer ----------
-    entry_words = (
-        frame_enriched
-        .filter(base_filter & F.col('soc4').isin(list(data_entry_soc)))
-        .select('noun_chunk', 'Share_byNounOcc')
-        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
-        .withColumn('Type', F.lit('data_entry'))
-    )
-
-    ana_words = (
-        frame_enriched
-        .filter(base_filter & F.col('soc4').isin(list(data_analytics_soc)))
-        .select('noun_chunk', 'Share_byNounOcc')
-        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
-        .withColumn('Type', F.lit('data_analytics'))
-    )
-
-    db_words = (
-        frame_enriched
-        .filter(base_filter & F.col('soc4').isin(list(database_soc)))
-        .select('noun_chunk', 'Share_byNounOcc')
-        .dropDuplicates(['noun_chunk', 'Share_byNounOcc'])
-        .withColumn('Type', F.lit('database'))
-    )
-
-    words = entry_words.unionByName(ana_words).unionByName(db_words)
-
-    # Ensure each chunk belongs to exactly one layer: keep the layer with max Share_byNounOcc
-    w = Window.partitionBy('noun_chunk')
-    word_fin = (
-        words
-        .withColumn('max_share', F.max('Share_byNounOcc').over(w))
-        .where(F.col('Share_byNounOcc') == F.col('max_share'))
-        .select('noun_chunk', 'Type')
-        .dropDuplicates(['noun_chunk'])
-    )
-
-    # ---------- Apply chunk dictionary back to all jobs ----------
-    frame_labeled = (
-        frame_enriched
-        .join(word_fin, on='noun_chunk', how='left')
-        .withColumn('data_entry',      F.when(F.col('Type') == 'data_entry',      1).otherwise(0))
-        .withColumn('database',        F.when(F.col('Type') == 'database',        1).otherwise(0))
-        .withColumn('data_analytics',  F.when(F.col('Type') == 'data_analytics',  1).otherwise(0))
-    )
-
-    # ---------- Job-level aggregation ----------
-    df_job = (
-        frame_labeled
-        .groupBy('doc_JobID', 'doc_BGTOcc')
-        .agg(
-            F.mean('sim_data').alias('sim_data_mean'),
-            F.sum('data_entry').alias('data_entry'),
-            F.sum('database').alias('database'),
-            F.sum('data_analytics').alias('data_analytics'),
-            F.count('noun_chunk').alias('chunk_count')
-        )
-    )
-
-    df_job = df_job.withColumn(
-        'Count_DataTerms',
-        F.col('data_entry') + F.col('database') + F.col('data_analytics')
-    )
-
-    # Convert raw counts into shares for jobs that are data-intensive (>= DATA_THRESHOLD chunks).
-    df_job = (
-        df_job
-        .withColumn(
-            'data_entry',
-            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
-                   F.col('data_entry') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
-        )
-        .withColumn(
-            'database',
-            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
-                   F.col('database') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
-        )
-        .withColumn(
-            'data_analytics',
-            F.when(F.col('Count_DataTerms') >= DATA_THRESHOLD,
-                   F.col('data_analytics') / F.col('Count_DataTerms')).otherwise(F.lit(0.0))
-        )
-        .withColumn(
-            'is_data_intensive',
-            (F.col('Count_DataTerms') >= DATA_THRESHOLD)
-        )
-    )
-
-    # Save job-level results
-    jc_path = ALL_PATHS[yr]['job_categories']
-    df_job.write.mode('overwrite').parquet(jc_path)
-
-    # ---------- Occupation-level summary ----------
-    occ_summary = (
-        df_job
-        .groupBy('doc_BGTOcc')
-        .agg(
-            F.count('*').alias('total_jobs'),
-            F.sum(F.col('is_data_intensive').cast('int')).alias('data_intensive_jobs'),
-            (F.mean('data_entry') * 100.0).alias('data_entry_share'),
-            (F.mean('database') * 100.0).alias('database_share'),
-            (F.mean('data_analytics') * 100.0).alias('data_analytics_share')
-        )
-    )
-
-    os_path = ALL_PATHS[yr]['occupation_summary']
-    occ_summary.write.mode('overwrite').parquet(os_path)
-    print(f'\tSaved job-level data to {jc_path} and occupation summary to {os_path}')
-
-
-
-
-
-
-# Count aggregate contribution of each data layer across occupations
-counts = {
-    'data_entry': occupation_df['data_entry_share'].sum(),
-    'database': occupation_df['database_share'].sum(),
-    'data_analytics': occupation_df['data_analytics_share'].sum(),
-}
-
-fig_cat = px.pie(
-    names=list(counts.keys()),
-    values=list(counts.values()),
-    title='Aggregate contribution of data layers across occupations',
-    height=450
+# ---- Spark (can be lighter than your big compute job) ----
+spark = (
+    SparkSession.builder
+    .appName("DataIntensity_Visualisation")
+    .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+    .getOrCreate()
 )
-fig_cat.update_traces(textposition='inside', textinfo='percent+label')
-fig_cat.show()
+spark.sparkContext.setLogLevel("ERROR")
 
+print("Spark ready for viz-only work.")
 
+# ---- Years & path config (re-use same BASE_S3A_PATH and scheme) ----
+BASE_S3A_PATH = "s3a://em_sources/_SDD/OECD_DATA"
+YEARS = "2021-2025"  # adjust to whatever years you actually ran at 1%
 
+def get_available_years():
+    # adapt to what you actually have processed
+    return list(range(2021, 2026))
 
-
-
-from pyspark.sql import DataFrame
-from pyspark.sql import functions as F
-
-# -----------------------------
-# Sampling configuration
-# -----------------------------
-# Set SAMPLE_FRACTION to e.g. 0.1 for 10% of each year's data.
-# Set it to None or 1.0 to use 100% of the data.
-SAMPLE_FRACTION = 0.10   # 10% per year
-SAMPLE_SEED = 42         # for reproducibility
-
-# Dictionary to hold DataFrames per year
-all_data = {}
-total_jobs = 0
-
-if PARQUET_PATH:
-    # Validate Parquet path within OECD_DATA
-    validate_oecd_path(PARQUET_PATH)
-    print(f'Loading unified Parquet dataset from {PARQUET_PATH}...')
-    full_df = spark.read.parquet(PARQUET_PATH)
-    full_df = full_df.withColumn('date', F.to_date('date'))
-
-    for yr in tqdm(years_to_process, desc='Reading data (Parquet)'):
-        year_df = full_df.filter(F.year('date') == yr)
-
-        # Select and clean relevant columns
-        year_df = (
-            year_df.select(
-                'date',
-                'job_id',
-                'soc_2020',
-                'job_title',
-                F.col('full_text').cast('string'),
-            )
-            .filter(F.col('full_text').isNotNull() & (F.length('full_text') > 0))
-        )
-
-        # Apply sampling if requested
-        if SAMPLE_FRACTION is not None and 0 < SAMPLE_FRACTION < 1:
-            year_df = year_df.sample(
-                withReplacement=False,
-                fraction=SAMPLE_FRACTION,
-                seed=SAMPLE_SEED
-            )
-            print(f'\tApplying {SAMPLE_FRACTION*100:.1f}% sample for {yr}...')
-
-        year_df = year_df.withColumn('date', F.to_date('date', 'yyyy-MM-dd'))
-        count = year_df.count()
-        total_jobs += count
-        all_data[yr] = year_df
-        print(f'Year {yr}: {count:,} sampled records')
-
-else:
-    for yr in tqdm(years_to_process, desc='Reading data (CSV)'):
-        print(f'Loading CSV data for year {yr}...')
-        df = (
-            spark.read
-            .option('header', True)
-            .option('multiline', True)
-            .csv(ALL_PATHS[yr]['input_csv'])
-        )
-
-        df = (
-            df.select(
-                'date',
-                'job_id',
-                'soc_2020',
-                'job_title',
-                F.col('full_text').cast('string'),
-            )
-            .filter(F.col('full_text').isNotNull() & (F.length('full_text') > 0))
-        )
-
-        # Apply sampling if requested
-        if SAMPLE_FRACTION is not None and 0 < SAMPLE_FRACTION < 1:
-            df = df.sample(
-                withReplacement=False,
-                fraction=SAMPLE_FRACTION,
-                seed=SAMPLE_SEED
-            )
-            print(f'\tApplying {SAMPLE_FRACTION*100:.1f}% sample for {yr}...')
-
-        df = df.withColumn('date', F.to_date('date', 'yyyy-MM-dd'))
-        cnt = df.count()
-        total_jobs += cnt
-        all_data[yr] = df
-        print(f'\tRows read (after sampling): {cnt:,}')
-
-print(f'Total jobs loaded (after sampling): {total_jobs:,}')
-print(f'Sampling fraction: {SAMPLE_FRACTION if SAMPLE_FRACTION is not None else 1.0}')
-
-
-
-
-# ================================================================
-# 4. NLP Processing – Noun Chunk Extraction (Optimised for Scale)
-# ================================================================
-
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType
-
-# Schema for noun chunk extraction (unchanged)
-noun_schema = StructType([
-    StructField('doc_date',   StringType()),
-    StructField('doc_JobID',  StringType()),
-    StructField('doc_BGTOcc', StringType()),
-    StructField('noun_chunk', StringType()),
-    StructField('sim_data',   DoubleType()),
-])
-
-# Pandas UDF: extract noun chunks and similarity to "data"
-def extract_noun_chunks(iterator):
-    import spacy
-    import pandas as pd
-
-    # Load spaCy model once per worker
-    try:
-        # larger model if available
-        nlp = spacy.load('en_core_web_lg', exclude=['lemmatizer', 'ner'])
-    except OSError:
-        # fallback to small model
-        nlp = spacy.load('en_core_web_sm', exclude=['lemmatizer', 'ner'])
-
-    target = nlp('data')
-
-    for pdf in iterator:
-        rows = []
-
-        texts  = pdf['full_text'].fillna('').astype(str).tolist()
-        jobids = pdf['job_id'].astype(str).tolist()
-        dates  = pdf['date'].astype(str).tolist()
-        socs   = pdf['soc_2020'].astype(str).tolist()
-
-        # Slightly larger batch_size to reduce overhead; keep n_process=1 with Spark
-        for i, doc in enumerate(nlp.pipe(texts, batch_size=100, n_process=1)):
-            for chunk in doc.noun_chunks:
-                if chunk.has_vector:
-                    sim = float(chunk.similarity(target))
-                    cleaned = ''.join(c for c in chunk.text if not c.isdigit()).strip()
-                    if cleaned:
-                        rows.append({
-                            'doc_date':   dates[i],
-                            'doc_JobID':  jobids[i],
-                            'doc_BGTOcc': socs[i],
-                            'noun_chunk': cleaned.lower(),
-                            'sim_data':   sim,
-                        })
-
-        if rows:
-            yield pd.DataFrame(rows)
+def parse_year_input(year_input):
+    available_years = get_available_years()
+    if isinstance(year_input, str):
+        y = year_input.upper()
+        if y == "ALL":
+            years = available_years
+        elif "-" in y:
+            start, end = map(int, y.split("-"))
+            years = list(range(start, end + 1))
         else:
-            yield pd.DataFrame(columns=['doc_date','doc_JobID','doc_BGTOcc','noun_chunk','sim_data'])
+            years = [int(y)]
+    elif isinstance(year_input, (list, tuple)):
+        years = [int(x) for x in year_input]
+    else:
+        years = [int(year_input)]
+    invalid = [y for y in years if y not in available_years]
+    if invalid:
+        raise ValueError(f"Years {invalid} not available. Available: {available_years}")
+    return sorted(years)
 
-# Similarity threshold used later in reduction step
-SIM_THRESHOLD = 0.45
+years_to_process = parse_year_input(YEARS)
+print("Years to use in viz:", years_to_process)
 
-# Number of partitions for parallelism – tuned for ~30–40 executor cores
-TARGET_PARTITIONS = 128   # you can tweak to 96 or 192 depending on cluster size
+def get_paths_for_year(year):
+    base_year_path = os.path.join(BASE_S3A_PATH, "processed_data", str(year))
+    return {
+        "job_categories":      os.path.join(base_year_path, "job_categories"),
+        "occupation_summary":  os.path.join(base_year_path, "occupation_summary"),
+    }
 
-for yr in tqdm(years_to_process, desc='Extracting noun chunks (optimised)'):
-    print(f'Processing noun chunks for {yr}...')
+ALL_PATHS = {yr: get_paths_for_year(yr) for yr in years_to_process}
 
-    # Base job-level data for this year
-    df = all_data[yr]
 
-    # 1) Repartition once to a sensible number of tasks (CPU-heavy UDF)
-    df_part = df.repartition(TARGET_PARTITIONS)
 
-    # 2) Apply the Pandas UDF to extract noun chunks and similarity
-    nc_df = df_part.mapInPandas(extract_noun_chunks, schema=noun_schema)
 
-    # 3) Write out Parquet WITHOUT partitionBy('doc_date') to avoid tiny-file explosion
-    out_path = ALL_PATHS[yr]['noun_chunks']
-    (
-        nc_df
-        .write
-        .mode('overwrite')
-        .option('compression', 'snappy')
-        .parquet(out_path)
+import pandas as pd
+
+occupation_dfs = []
+job_dfs = []
+
+for yr in years_to_process:
+    occ_path = ALL_PATHS[yr]["occupation_summary"]
+    jc_path  = ALL_PATHS[yr]["job_categories"]
+
+    print(f"Reading occupation summary for {yr} from {occ_path}")
+    occ_df_spark = spark.read.parquet(occ_path).withColumn("year", F.lit(yr))
+    occupation_dfs.append(occ_df_spark.toPandas())
+
+    print(f"Reading job categories for {yr} from {jc_path}")
+    jc_df_spark = spark.read.parquet(jc_path).withColumn("year", F.lit(yr))
+    job_dfs.append(jc_df_spark.toPandas())
+
+occupation_df = pd.concat(occupation_dfs, ignore_index=True)
+job_df        = pd.concat(job_dfs, ignore_index=True)
+
+print("occupation_df columns:", occupation_df.columns.tolist())
+print("job_df columns:", job_df.columns.tolist())
+
+
+
+
+
+
+
+# Total data intensity at occupation level
+occupation_df["total_data_share"] = (
+    occupation_df["data_entry_share"]
+    + occupation_df["database_share"]
+    + occupation_df["data_analytics_share"]
+)
+
+# At job level, define a "data-intensive job" flag
+job_df["is_data_intensive"] = (
+    job_df[["data_entry", "database", "data_analytics"]].any(axis=1)
+)
+
+
+
+
+
+import plotly.express as px
+
+econ_year = (
+    job_df
+    .groupby("year", as_index=False)
+    .agg(
+        total_jobs=("doc_JobID", "count"),
+        data_intensive_jobs=("is_data_intensive", "sum"),
     )
+)
+econ_year["share_data_intensive"] = (
+    econ_year["data_intensive_jobs"] / econ_year["total_jobs"] * 100
+)
 
-    # Optional: you can uncomment this if you really want counts, but it will trigger
-    # an extra full pass over the data, so it slows things down.
-    # total_chunks = nc_df.count()
-    # print(f'\tSaved noun chunks to {out_path} (chunks: {total_chunks:,})')
+fig_econ = px.line(
+    econ_year.sort_values("year"),
+    x="year",
+    y="share_data_intensive",
+    markers=True,
+    title="Share of data-intensive job adverts over time (1% sample)",
+    labels={"year": "Year", "share_data_intensive": "Data-intensive jobs (%)"},
+    height=450,
+)
+fig_econ.show()
 
-    print(f'\tSaved noun chunks to {out_path}')
+
+
+
+
+latest_year = occupation_df["year"].max()
+latest_occ = occupation_df[occupation_df["year"] == latest_year].copy()
+
+top_n = 20
+top_latest = (
+    latest_occ
+    .sort_values("total_data_share", ascending=False)
+    .head(top_n)
+    .reset_index(drop=True)
+)
+
+top_melt = top_latest.melt(
+    id_vars=["doc_BGTOcc"],
+    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
+    var_name="category",
+    value_name="share",
+)
+
+category_labels = {
+    "data_entry_share": "Data entry",
+    "database_share": "Database",
+    "data_analytics_share": "Data analytics",
+}
+top_melt["category_label"] = top_melt["category"].map(category_labels)
+
+fig_top = px.bar(
+    top_melt,
+    x="doc_BGTOcc",
+    y="share",
+    color="category_label",
+    title=f"Top {top_n} occupations by data intensity in {latest_year} (1% sample)",
+    labels={"doc_BGTOcc": "SOC code", "share": "Share of data-intensive jobs (%)", "category_label": "Layer"},
+    height=500,
+)
+fig_top.update_layout(barmode="stack")
+fig_top.show()
+
+
+
+
+
+
+
+def weighted_mean(group, col):
+    return (group[col] * group["total_jobs"]).sum() / group["total_jobs"].sum()
+
+agg_rows = []
+for yr, g in occupation_df.groupby("year"):
+    agg_rows.append({
+        "year": yr,
+        "data_entry_share":      weighted_mean(g, "data_entry_share"),
+        "database_share":        weighted_mean(g, "database_share"),
+        "data_analytics_share":  weighted_mean(g, "data_analytics_share"),
+    })
+
+occ_year = pd.DataFrame(agg_rows)
+
+occ_year_melt = occ_year.melt(
+    id_vars=["year"],
+    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
+    var_name="category",
+    value_name="share",
+)
+occ_year_melt["category_label"] = occ_year_melt["category"].map(category_labels)
+
+fig_layers = px.area(
+    occ_year_melt.sort_values("year"),
+    x="year",
+    y="share",
+    color="category_label",
+    title="Evolution of data-related work (entry / database / analytics)",
+    labels={"year": "Year", "share": "Avg share in data-intensive jobs (%)", "category_label": "Layer"},
+    height=450,
+)
+fig_layers.show()
+
+
+
+
+
+
+
+top_codes = top_latest["doc_BGTOcc"].unique()
+heat_df = occupation_df[occupation_df["doc_BGTOcc"].isin(top_codes)].copy()
+
+pivot = heat_df.pivot_table(
+    index="doc_BGTOcc",
+    columns="year",
+    values="total_data_share",
+    aggfunc="mean",
+)
+
+fig_heat = px.imshow(
+    pivot.sort_index(),
+    aspect="auto",
+    labels=dict(x="Year", y="SOC code", color="Total data intensity (%)"),
+    title=f"Data intensity over time for top {top_n} occupations (1% sample)",
+    height=600,
+)
+fig_heat.show()
+
+
+
+
+
+
+
+
+target_soc = str(top_codes[0])   # or e.g. '2135' etc.
+
+soc_trend = occupation_df[occupation_df["doc_BGTOcc"] == target_soc].copy()
+soc_melt = soc_trend.melt(
+    id_vars=["year"],
+    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
+    var_name="category",
+    value_name="share",
+)
+soc_melt["category_label"] = soc_melt["category"].map(category_labels)
+
+fig_soc = px.line(
+    soc_melt.sort_values("year"),
+    x="year",
+    y="share",
+    color="category_label",
+    markers=True,
+    title=f"Data-layer mix over time for SOC {target_soc}",
+    labels={"year": "Year", "share": "Share in data-intensive jobs (%)", "category_label": "Layer"},
+    height=450,
+)
+fig_soc.show()
+
+
+
