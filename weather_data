@@ -86,32 +86,38 @@ print("Utilities ready: safe_write_parquet_s3a(), read_latest_version()")
 
 
 
-# Root directory (keep inside OECD_DATA)
-BASE_S3A_PATH = "s3a://em_sources/_SDD/OECD_DATA"
+from datetime import datetime
+import os
 
-# Years you actually want
-YEARS = "2020-2025"  # you said Jan 2020 -> Oct 2025 (still “year buckets” for now)
+# Root directory: do not specify a path outside of OECD_DATA
+BASE_S3A_PATH = "s3a://onscdp-prd-data01-d4946922/dapsen/workspace_zone/online_job_ads/OECD_DATA/"
 
-# Restart flags
-FORCE_RECOMPUTE = False         # if True, overwrite even if outputs exist
-WRITE_DEBUG_CHUNKS = False      # if True, write a tiny chunk-level sample for interpretability
-DEBUG_SAMPLE_FRACTION = 0.0001  # 0.01% debug sample (safe). Keep tiny.
+# Year selection: 'ALL', a single year, a range '2020-2023' or a list [2020,2022]
+YEARS = "ALL"
 
-# NLP thresholds
-SIM_THRESHOLD = 0.45
-DATA_THRESHOLD = 3     # ">= 3 mentions" rule
+# Optional: specify a Parquet file within the OECD_DATA root to bypass CSV loading
+# Example:
+# PARQUET_PATH = os.path.join(BASE_S3A_PATH, "microdata_20_November_2025_1735.parquet")
+PARQUET_PATH = None
 
-# If you want fast iteration:
-SAMPLE_FRACTION = 0.01  # 1% (set to None or 1.0 for full run)
+# Optional: if you ever want to point directly to a CSV root rather than BASE_S3A_PATH/csv_data/<year>
+# leave as None unless you know you need it.
+CSV_PATH = None
+
+
+# ------------------------------------------------------------------------------
+# Helper functions for year parsing and path construction
+# ------------------------------------------------------------------------------
 
 def get_available_years():
-    # Adjust if your storage includes earlier years
-    return list(range(2017, 2026))
+    # Match your historical setup
+    return list(range(2020, 2026))  # 2020..2025 inclusive
+
 
 def parse_year_input(year_input):
     available_years = get_available_years()
     if isinstance(year_input, str):
-        y = year_input.upper()
+        y = year_input.strip().upper()
         if y == "ALL":
             years = available_years
         elif "-" in y:
@@ -123,31 +129,54 @@ def parse_year_input(year_input):
         years = [int(x) for x in year_input]
     else:
         years = [int(year_input)]
+
     invalid = [yy for yy in years if yy not in available_years]
     if invalid:
         raise ValueError(f"Years {invalid} not available. Available years: {available_years}")
     return sorted(years)
 
+
 years_to_process = parse_year_input(YEARS)
 print("Years to process:", years_to_process)
 
-def get_paths_for_year(year):
-    base_year_path = f"{BASE_S3A_PATH}/processed_data/{year}"
+
+def validate_oecd_path(path: str) -> bool:
+    # Simple prefix check consistent with your setup
+    if not path.startswith(BASE_S3A_PATH):
+        raise ValueError(f"Path {path} is outside OECD_DATA folder!")
+    return True
+
+
+def get_paths_for_year(year: int):
+    base_year_path = os.path.join(BASE_S3A_PATH, "processed_data", str(year))
+
+    # Input CSV folder: either explicitly set CSV_PATH or default to BASE_S3A_PATH/csv_data/<year>
+    if CSV_PATH:
+        input_csv = os.path.join(CSV_PATH, str(year))
+    else:
+        input_csv = os.path.join(BASE_S3A_PATH, "csv_data", str(year))
+
     return {
-        "input_csv": f"{BASE_S3A_PATH}/csv_data/{year}",
-        # Efficient outputs (JOB LEVEL)
-        "job_features": f"{base_year_path}/job_features",         # noun-chunk summaries per job
-        "job_categories": f"{base_year_path}/job_categories",     # final job flags per job
-        "occupation_summary": f"{base_year_path}/occupation_summary",
-        "job_categories_sic": f"{base_year_path}/job_categories_with_sic_synth",
-        "sector_summary_sic": f"{base_year_path}/sector_summary_sic_synth",
-        # Optional debug output (CHUNK LEVEL SAMPLE ONLY)
-        "debug_chunks": f"{base_year_path}/debug_chunks_sample",
+        "input_csv": input_csv,
+        "noun_chunks": os.path.join(base_year_path, "noun_chunks"),
+        "reduced_data": os.path.join(base_year_path, "reduced_data"),
+        "job_categories": os.path.join(base_year_path, "job_categories"),
+        "occupation_summary": os.path.join(base_year_path, "occupation_summary"),
     }
 
-ALL_PATHS = {yr: get_paths_for_year(yr) for yr in years_to_process}
-print("Paths ready.")
 
+ALL_PATHS = {year: get_paths_for_year(year) for year in years_to_process}
+
+# Validate all constructed paths
+for year, paths in ALL_PATHS.items():
+    for key, path in paths.items():
+        validate_oecd_path(path)
+
+print("Path validation complete.")
+
+# Debug guard (this prevents your KeyError surprises)
+print("ALL_PATHS keys:", sorted(ALL_PATHS.keys()))
+print("Example paths for first year:", years_to_process[0], ALL_PATHS[years_to_process[0]])
 
 
 
