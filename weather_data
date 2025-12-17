@@ -1,25 +1,112 @@
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
+from pyspark.sql.types import *
 import os
+import datetime
+from tqdm.auto import tqdm
 
-# ---- Spark (can be lighter than your big compute job) ----
-spark = (
-    SparkSession.builder
-    .appName("DataIntensity_Visualisation")
-    .config("spark.sql.execution.arrow.pyspark.enabled", "true")
-    .getOrCreate()
-)
-spark.sparkContext.setLogLevel("ERROR")
+# ------------------------------------------------------------------------------------
+# Spark: re-use existing session if already running; otherwise create.
+# ------------------------------------------------------------------------------------
+try:
+    spark  # noqa: F821
+    spark.sparkContext.setLogLevel("ERROR")
+    print("Re-using existing Spark session.")
+except NameError:
+    auto_config = (
+        SparkSession.builder
+        .appName("OECD_Data_Intensity_Pipeline")
+        .config("spark.executor.memory", "13g")
+        .config("spark.driver.memory", "3g")
+        .config("spark.executor.cores", "4")
+        .config("spark.driver.cores", "4")
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.skewJoin.enabled", "true")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true")
+        .config("spark.sql.parquet.compression.codec", "snappy")
+    )
+    spark = auto_config.getOrCreate()
+    spark.sparkContext.setLogLevel("ERROR")
+    print("Spark session created.")
 
-print("Spark ready for viz-only work.")
+# ------------------------------------------------------------------------------------
+# S3A-safe "safe write" pattern:
+# - Writes to versioned path
+# - Creates a tiny _SUCCESS marker
+# - Leaves previous versions intact (true safety on object storage)
+# ------------------------------------------------------------------------------------
+def safe_write_parquet_s3a(df, output_base_path, mode="overwrite", create_version=True, verify_read=True):
+    """
+    Safe-ish write for object stores (s3a://...). Avoids os.rename, which is not atomic on S3.
+    - If create_version=True: writes to output_base_path/_v=YYYYMMDD_HHMMSS
+      and also writes/overwrites output_base_path/_latest pointer file (text)
+    - verify_read does a quick count() to confirm readability.
+    """
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    version_path = f"{output_base_path}/_v={ts}" if create_version else output_base_path
 
-# ---- Years & path config (re-use same BASE_S3A_PATH and scheme) ----
+    print(f"Writing parquet to: {version_path}")
+    df.write.mode(mode).option("compression", "snappy").parquet(version_path)
+
+    if verify_read:
+        _ = spark.read.parquet(version_path).limit(1).count()
+
+    # Write a small marker file (works on most HDFS/S3A configs; if not, harmless if skipped)
+    try:
+        marker_df = spark.createDataFrame([(ts,)], ["written_at"])
+        marker_df.coalesce(1).write.mode("overwrite").json(f"{version_path}/_SUCCESS_MARKER")
+    except Exception as e:
+        print(f"Warning: could not write marker: {e}")
+
+    # Update "latest" pointer
+    if create_version:
+        try:
+            latest_df = spark.createDataFrame([(version_path, ts)], ["latest_path", "timestamp"])
+            latest_df.coalesce(1).write.mode("overwrite").json(f"{output_base_path}/_LATEST_POINTER")
+        except Exception as e:
+            print(f"Warning: could not update _LATEST_POINTER: {e}")
+
+    print("Write complete.")
+    return version_path
+
+def read_latest_version(output_base_path):
+    """
+    Reads the path stored in _LATEST_POINTER and returns that parquet DF.
+    """
+    pointer_path = f"{output_base_path}/_LATEST_POINTER"
+    pointer = spark.read.json(pointer_path)
+    latest = pointer.orderBy(F.col("timestamp").desc()).limit(1).collect()[0]["latest_path"]
+    return spark.read.parquet(latest), latest
+
+print("Utilities ready: safe_write_parquet_s3a(), read_latest_version()")
+
+
+
+
+
+# Root directory (keep inside OECD_DATA)
 BASE_S3A_PATH = "s3a://em_sources/_SDD/OECD_DATA"
-YEARS = "2021-2025"  # adjust to whatever years you actually ran at 1%
+
+# Years you actually want
+YEARS = "2020-2025"  # you said Jan 2020 -> Oct 2025 (still “year buckets” for now)
+
+# Restart flags
+FORCE_RECOMPUTE = False         # if True, overwrite even if outputs exist
+WRITE_DEBUG_CHUNKS = False      # if True, write a tiny chunk-level sample for interpretability
+DEBUG_SAMPLE_FRACTION = 0.0001  # 0.01% debug sample (safe). Keep tiny.
+
+# NLP thresholds
+SIM_THRESHOLD = 0.45
+DATA_THRESHOLD = 3     # ">= 3 mentions" rule
+
+# If you want fast iteration:
+SAMPLE_FRACTION = 0.01  # 1% (set to None or 1.0 for full run)
 
 def get_available_years():
-    # adapt to what you actually have processed
-    return list(range(2021, 2026))
+    # Adjust if your storage includes earlier years
+    return list(range(2017, 2026))
 
 def parse_year_input(year_input):
     available_years = get_available_years()
@@ -36,230 +123,514 @@ def parse_year_input(year_input):
         years = [int(x) for x in year_input]
     else:
         years = [int(year_input)]
-    invalid = [y for y in years if y not in available_years]
+    invalid = [yy for yy in years if yy not in available_years]
     if invalid:
-        raise ValueError(f"Years {invalid} not available. Available: {available_years}")
+        raise ValueError(f"Years {invalid} not available. Available years: {available_years}")
     return sorted(years)
 
 years_to_process = parse_year_input(YEARS)
-print("Years to use in viz:", years_to_process)
+print("Years to process:", years_to_process)
 
 def get_paths_for_year(year):
-    base_year_path = os.path.join(BASE_S3A_PATH, "processed_data", str(year))
+    base_year_path = f"{BASE_S3A_PATH}/processed_data/{year}"
     return {
-        "job_categories":      os.path.join(base_year_path, "job_categories"),
-        "occupation_summary":  os.path.join(base_year_path, "occupation_summary"),
+        "input_csv": f"{BASE_S3A_PATH}/csv_data/{year}",
+        # Efficient outputs (JOB LEVEL)
+        "job_features": f"{base_year_path}/job_features",         # noun-chunk summaries per job
+        "job_categories": f"{base_year_path}/job_categories",     # final job flags per job
+        "occupation_summary": f"{base_year_path}/occupation_summary",
+        "job_categories_sic": f"{base_year_path}/job_categories_with_sic_synth",
+        "sector_summary_sic": f"{base_year_path}/sector_summary_sic_synth",
+        # Optional debug output (CHUNK LEVEL SAMPLE ONLY)
+        "debug_chunks": f"{base_year_path}/debug_chunks_sample",
     }
 
 ALL_PATHS = {yr: get_paths_for_year(yr) for yr in years_to_process}
+print("Paths ready.")
+
+
+
+
+
+all_data = {}
+total_jobs = 0
+
+for yr in tqdm(years_to_process, desc="Reading data (CSV)"):
+    print(f"\n[LOAD] Year {yr} from {ALL_PATHS[yr]['input_csv']} ...")
+    df = (
+        spark.read
+        .option("header", True)
+        .option("multiline", True)
+        .csv(ALL_PATHS[yr]["input_csv"])
+    )
+
+    df = (
+        df.select(
+            "date",
+            "job_id",
+            "soc_2020",
+            "job_title",
+            F.col("full_text").cast("string"),
+        )
+        .filter(F.col("full_text").isNotNull() & (F.length("full_text") > 0))
+        .withColumn("date", F.to_date("date", "yyyy-MM-dd"))
+    )
+
+    if SAMPLE_FRACTION is not None and SAMPLE_FRACTION < 1.0:
+        # stable seed sampling
+        df = df.sample(withReplacement=False, fraction=float(SAMPLE_FRACTION), seed=42)
+
+    cnt = df.count()
+    total_jobs += cnt
+    all_data[yr] = df
+    print(f"[LOAD] Year {yr}: {cnt:,} rows")
+
+print(f"\n[LOAD] Total jobs loaded: {total_jobs:,}")
+
+
+
+
+
+
+
+from pyspark.sql import DataFrame
+
+# Schema: one row per job advert (efficient)
+job_features_schema = StructType([
+    StructField("date", StringType()),
+    StructField("job_id", StringType()),
+    StructField("soc_2020", StringType()),
+    StructField("n_chunks_total", IntegerType()),
+    StructField("n_chunks_data", IntegerType()),
+    StructField("avg_sim_data", DoubleType()),
+    StructField("top_chunks", ArrayType(StringType())),
+    StructField("top_sims", ArrayType(DoubleType())),
+])
+
+# Optional debug schema: chunk-level (ONLY for tiny sample)
+debug_schema = StructType([
+    StructField("date", StringType()),
+    StructField("job_id", StringType()),
+    StructField("soc_2020", StringType()),
+    StructField("noun_chunk", StringType()),
+    StructField("sim_data", DoubleType()),
+])
+
+TOP_K = 10  # keep small
+
+def extract_job_features(iterator):
+    import spacy
+    import pandas as pd
+
+    try:
+        nlp = spacy.load("en_core_web_lg", exclude=["lemmatizer", "ner"])
+    except OSError:
+        nlp = spacy.load("en_core_web_sm")
+
+    target = nlp("data")
+
+    for pdf in iterator:
+        # Safety
+        pdf = pdf.copy()
+        pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
+        pdf["job_id"] = pdf["job_id"].astype(str)
+        pdf["soc_2020"] = pdf["soc_2020"].astype(str)
+        pdf["date"] = pdf["date"].astype(str)
+
+        out_rows = []
+
+        texts = pdf["full_text"].tolist()
+        jobids = pdf["job_id"].tolist()
+        socs = pdf["soc_2020"].tolist()
+        dates = pdf["date"].tolist()
+
+        for i, doc in enumerate(nlp.pipe(texts, batch_size=50, n_process=1)):
+            total_chunks = 0
+            data_chunks = []
+
+            for chunk in doc.noun_chunks:
+                total_chunks += 1
+                if chunk.has_vector:
+                    sim = float(chunk.similarity(target))
+                    if sim >= SIM_THRESHOLD:
+                        cleaned = "".join(c for c in chunk.text if not c.isdigit()).strip().lower()
+                        if cleaned:
+                            data_chunks.append((cleaned, sim))
+
+            # Summaries
+            n_data = len(data_chunks)
+            if n_data > 0:
+                data_chunks.sort(key=lambda x: x[1], reverse=True)
+                top = data_chunks[:TOP_K]
+                top_chunks = [t[0] for t in top]
+                top_sims = [float(t[1]) for t in top]
+                avg_sim = float(sum([t[1] for t in data_chunks]) / n_data)
+            else:
+                top_chunks, top_sims, avg_sim = [], [], None
+
+            out_rows.append({
+                "date": dates[i],
+                "job_id": jobids[i],
+                "soc_2020": socs[i],
+                "n_chunks_total": int(total_chunks),
+                "n_chunks_data": int(n_data),
+                "avg_sim_data": avg_sim,
+                "top_chunks": top_chunks,
+                "top_sims": top_sims,
+            })
+
+        yield pd.DataFrame(out_rows)
+
+def extract_debug_chunks(iterator):
+    import spacy
+    import pandas as pd
+
+    try:
+        nlp = spacy.load("en_core_web_lg", exclude=["lemmatizer", "ner"])
+    except OSError:
+        nlp = spacy.load("en_core_web_sm")
+
+    target = nlp("data")
+
+    for pdf in iterator:
+        pdf = pdf.copy()
+        pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
+        pdf["job_id"] = pdf["job_id"].astype(str)
+        pdf["soc_2020"] = pdf["soc_2020"].astype(str)
+        pdf["date"] = pdf["date"].astype(str)
+
+        rows = []
+        texts = pdf["full_text"].tolist()
+        jobids = pdf["job_id"].tolist()
+        socs = pdf["soc_2020"].tolist()
+        dates = pdf["date"].tolist()
+
+        for i, doc in enumerate(nlp.pipe(texts, batch_size=50, n_process=1)):
+            for chunk in doc.noun_chunks:
+                if chunk.has_vector:
+                    sim = float(chunk.similarity(target))
+                    cleaned = "".join(c for c in chunk.text if not c.isdigit()).strip().lower()
+                    if cleaned:
+                        rows.append({
+                            "date": dates[i],
+                            "job_id": jobids[i],
+                            "soc_2020": socs[i],
+                            "noun_chunk": cleaned,
+                            "sim_data": sim,
+                        })
+
+        if rows:
+            yield pd.DataFrame(rows)
+        else:
+            yield pd.DataFrame(columns=["date","job_id","soc_2020","noun_chunk","sim_data"])
+
+for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
+    out_base = ALL_PATHS[yr]["job_features"]
+
+    # Skip if already computed and not forcing
+    if (not FORCE_RECOMPUTE):
+        try:
+            _df, latest_path = read_latest_version(out_base)
+            print(f"\n[SKIP] Year {yr} job_features already exist at: {latest_path}")
+            continue
+        except Exception:
+            pass  # not found
+
+    print(f"\n[NLP] Year {yr} starting…")
+    df = all_data[yr]
+
+    # Partitioning: tune to reduce overhead
+    total_rows = df.count()
+    estimated_row_size = 1000
+    target_partition_bytes = 128 * 1024 * 1024
+    num_partitions = max(16, int((total_rows * estimated_row_size) / target_partition_bytes))
+    print(f"[NLP] Year {yr} rows={total_rows:,} partitions={num_partitions}")
+
+    df_part = df.repartition(num_partitions)
+
+    # Job-level features (efficient)
+    job_feat = df_part.mapInPandas(extract_job_features, schema=job_features_schema)
+
+    # Persist to reduce recomputation during write
+    job_feat = job_feat.withColumn("year", F.year(F.to_date("date"))) \
+                       .withColumn("month", F.month(F.to_date("date")))
+
+    latest_written = safe_write_parquet_s3a(
+        job_feat,
+        out_base,
+        mode="overwrite",
+        create_version=True,
+        verify_read=True
+    )
+
+    print(f"[NLP] Year {yr} job_features written to: {latest_written}")
+
+    # Optional: debug chunk-level sample (tiny)
+    if WRITE_DEBUG_CHUNKS:
+        dbg_base = ALL_PATHS[yr]["debug_chunks"]
+        dbg_df = df_part.sample(False, DEBUG_SAMPLE_FRACTION, seed=42)
+        dbg_chunks = dbg_df.mapInPandas(extract_debug_chunks, schema=debug_schema)
+        dbg_chunks = dbg_chunks.withColumn("year", F.year(F.to_date("date"))) \
+                               .withColumn("month", F.month(F.to_date("date")))
+        dbg_written = safe_write_parquet_s3a(dbg_chunks, dbg_base, create_version=True)
+        print(f"[NLP-DEBUG] Year {yr} debug chunks written to: {dbg_written}")
+
+
+
+
+
+
+
+# SOC → category sets (your current logic)
+data_entry_soc = {"4111","4112","4113","4114","4121","4131","4132","4150"}
+database_soc = {"2423","2136"}
+data_analytics_soc = {"2421","2424","2133","2135"}
+
+for yr in tqdm(years_to_process, desc="Job classification + occ summary"):
+    print(f"\n[CLASSIFY] Year {yr}")
+
+    # Read latest job_features for this year
+    job_feat_df, job_feat_path = read_latest_version(ALL_PATHS[yr]["job_features"])
+    print(f"[CLASSIFY] Using job_features from: {job_feat_path}")
+
+    # Ensure year scope (in case your job_features folder contains multiple years in a rerun)
+    job_feat_df = job_feat_df.filter(F.year(F.to_date("date")) == yr)
+
+    # Use SOC4 for mapping
+    job_feat_df = job_feat_df.withColumn("soc4", F.substring(F.col("soc_2020"), 1, 4))
+
+    # Data-intensity rule: >= DATA_THRESHOLD data-related chunks
+    is_data_intensive = (F.col("n_chunks_data") >= F.lit(DATA_THRESHOLD))
+
+    job_categories = (
+        job_feat_df.select("job_id","soc_2020","soc4","date","n_chunks_data","avg_sim_data","top_chunks","top_sims")
+        .withColumn("data_entry", (F.col("soc4").isin(list(data_entry_soc)) & is_data_intensive).cast("int"))
+        .withColumn("database", (F.col("soc4").isin(list(database_soc)) & is_data_intensive).cast("int"))
+        .withColumn("data_analytics", (F.col("soc4").isin(list(data_analytics_soc)) & is_data_intensive).cast("int"))
+        .withColumn("any_data_intensive", (is_data_intensive).cast("int"))
+        .withColumn("year", F.year(F.to_date("date")))
+        .withColumn("month", F.month(F.to_date("date")))
+    )
+
+    # Write job_categories (job-level)
+    jc_base = ALL_PATHS[yr]["job_categories"]
+    if FORCE_RECOMPUTE:
+        jc_written = safe_write_parquet_s3a(job_categories, jc_base, create_version=True)
+    else:
+        try:
+            _df, latest = read_latest_version(jc_base)
+            print(f"[SKIP] job_categories exists: {latest}")
+            jc_written = latest
+        except Exception:
+            jc_written = safe_write_parquet_s3a(job_categories, jc_base, create_version=True)
+
+    # Occupation summary (SOC4)
+    occ = (
+        job_categories.groupBy("soc4")
+        .agg(
+            F.count("*").alias("total_jobs"),
+            F.sum("data_entry").alias("data_entry_jobs"),
+            F.sum("database").alias("database_jobs"),
+            F.sum("data_analytics").alias("data_analytics_jobs"),
+            F.sum("any_data_intensive").alias("any_data_intensive_jobs"),
+        )
+        .withColumn("data_entry_share", 100 * F.col("data_entry_jobs") / F.col("total_jobs"))
+        .withColumn("database_share", 100 * F.col("database_jobs") / F.col("total_jobs"))
+        .withColumn("data_analytics_share", 100 * F.col("data_analytics_jobs") / F.col("total_jobs"))
+        .withColumn("total_data_share", 100 * F.col("any_data_intensive_jobs") / F.col("total_jobs"))
+        .withColumn("year", F.lit(int(yr)))
+    )
+
+    os_base = ALL_PATHS[yr]["occupation_summary"]
+    if FORCE_RECOMPUTE:
+        os_written = safe_write_parquet_s3a(occ, os_base, create_version=True)
+    else:
+        try:
+            _df, latest = read_latest_version(os_base)
+            print(f"[SKIP] occupation_summary exists: {latest}")
+            os_written = latest
+        except Exception:
+            os_written = safe_write_parquet_s3a(occ, os_base, create_version=True)
+
+    print(f"[CLASSIFY] Saved year {yr}: job_categories={jc_written} | occupation_summary={os_written}")
+
+
+
+
+
+
+
+# Synthetic SIC mapping (DEMO ONLY) - SOC major group (first digit) -> SIC Section (A-U)
+SOC_MAJOR_TO_SIC = {
+    "1": "M",
+    "2": "M",
+    "3": "J",
+    "4": "N",
+    "5": "F",
+    "6": "Q",
+    "7": "G",
+    "8": "C",
+    "9": "N",
+}
+
+def soc_to_sic_section(soc):
+    if soc is None:
+        return None
+    s = str(soc).strip()
+    if len(s) == 0:
+        return None
+    return SOC_MAJOR_TO_SIC.get(s[0], None)
+
+sic_udf = F.udf(soc_to_sic_section, StringType())
+
+for yr in tqdm(years_to_process, desc="Synthetic SIC + sector summary"):
+    print(f"\n[SIC-SYNTH] Year {yr}")
+
+    # Read latest job_categories
+    jc_df, jc_path = read_latest_version(ALL_PATHS[yr]["job_categories"])
+    jc_df = jc_df.filter(F.year(F.to_date("date")) == yr)
+    print(f"[SIC-SYNTH] Using job_categories from: {jc_path}")
+
+    # Add synthetic SIC section
+    jc_sic = jc_df.withColumn("SICSection_synth", sic_udf(F.col("soc_2020")))
+
+    # Save
+    jc_sic_base = ALL_PATHS[yr]["job_categories_sic"]
+    if FORCE_RECOMPUTE:
+        jc_sic_written = safe_write_parquet_s3a(jc_sic, jc_sic_base, create_version=True)
+    else:
+        try:
+            _df, latest = read_latest_version(jc_sic_base)
+            print(f"[SKIP] job_categories_with_sic exists: {latest}")
+            jc_sic_written = latest
+        except Exception:
+            jc_sic_written = safe_write_parquet_s3a(jc_sic, jc_sic_base, create_version=True)
+
+    # Sector summary by synthetic SIC section
+    sec = (
+        jc_sic.filter(F.col("SICSection_synth").isNotNull())
+        .groupBy("SICSection_synth")
+        .agg(
+            F.count("*").alias("total_jobs"),
+            F.sum(F.col("data_entry")).alias("data_entry_jobs"),
+            F.sum(F.col("database")).alias("database_jobs"),
+            F.sum(F.col("data_analytics")).alias("data_analytics_jobs"),
+            F.sum(F.col("any_data_intensive")).alias("any_data_intensive_jobs"),
+        )
+        .withColumn("data_entry_share", 100 * F.col("data_entry_jobs") / F.col("total_jobs"))
+        .withColumn("database_share", 100 * F.col("database_jobs") / F.col("total_jobs"))
+        .withColumn("data_analytics_share", 100 * F.col("data_analytics_jobs") / F.col("total_jobs"))
+        .withColumn("total_data_share", 100 * F.col("any_data_intensive_jobs") / F.col("total_jobs"))
+        .withColumn("year", F.lit(int(yr)))
+    )
+
+    sec_base = ALL_PATHS[yr]["sector_summary_sic"]
+    if FORCE_RECOMPUTE:
+        sec_written = safe_write_parquet_s3a(sec, sec_base, create_version=True)
+    else:
+        try:
+            _df, latest = read_latest_version(sec_base)
+            print(f"[SKIP] sector_summary_sic exists: {latest}")
+            sec_written = latest
+        except Exception:
+            sec_written = safe_write_parquet_s3a(sec, sec_base, create_version=True)
+
+    print(f"[SIC-SYNTH] Saved year {yr}: job_categories_sic={jc_sic_written} | sector_summary={sec_written}")
+
+
 
 
 
 
 import pandas as pd
-
-occupation_dfs = []
-job_dfs = []
-
-for yr in years_to_process:
-    occ_path = ALL_PATHS[yr]["occupation_summary"]
-    jc_path  = ALL_PATHS[yr]["job_categories"]
-
-    print(f"Reading occupation summary for {yr} from {occ_path}")
-    occ_df_spark = spark.read.parquet(occ_path).withColumn("year", F.lit(yr))
-    occupation_dfs.append(occ_df_spark.toPandas())
-
-    print(f"Reading job categories for {yr} from {jc_path}")
-    jc_df_spark = spark.read.parquet(jc_path).withColumn("year", F.lit(yr))
-    job_dfs.append(jc_df_spark.toPandas())
-
-occupation_df = pd.concat(occupation_dfs, ignore_index=True)
-job_df        = pd.concat(job_dfs, ignore_index=True)
-
-print("occupation_df columns:", occupation_df.columns.tolist())
-print("job_df columns:", job_df.columns.tolist())
-
-
-
-
-
-
-
-# Total data intensity at occupation level
-occupation_df["total_data_share"] = (
-    occupation_df["data_entry_share"]
-    + occupation_df["database_share"]
-    + occupation_df["data_analytics_share"]
-)
-
-# At job level, define a "data-intensive job" flag
-job_df["is_data_intensive"] = (
-    job_df[["data_entry", "database", "data_analytics"]].any(axis=1)
-)
-
-
-
-
-
 import plotly.express as px
 
-econ_year = (
-    job_df
-    .groupby("year", as_index=False)
-    .agg(
-        total_jobs=("doc_JobID", "count"),
-        data_intensive_jobs=("is_data_intensive", "sum"),
-    )
-)
-econ_year["share_data_intensive"] = (
-    econ_year["data_intensive_jobs"] / econ_year["total_jobs"] * 100
-)
+occ_frames = []
+sec_frames = []
 
-fig_econ = px.line(
-    econ_year.sort_values("year"),
+for yr in years_to_process:
+    occ_df, occ_path = read_latest_version(ALL_PATHS[yr]["occupation_summary"])
+    sec_df, sec_path = read_latest_version(ALL_PATHS[yr]["sector_summary_sic"])
+
+    occ_frames.append(occ_df.toPandas())
+    sec_frames.append(sec_df.toPandas())
+
+occupation_df = pd.concat(occ_frames, ignore_index=True)
+sector_df = pd.concat(sec_frames, ignore_index=True)
+
+occupation_df["year"] = occupation_df["year"].astype(int)
+sector_df["year"] = sector_df["year"].astype(int)
+
+print("Loaded occupation_df:", occupation_df.shape)
+print("Loaded sector_df:", sector_df.shape)
+
+
+
+
+
+yearly = (
+    occupation_df.groupby("year")[["total_jobs","any_data_intensive_jobs"]]
+    .sum()
+    .reset_index()
+)
+yearly["data_intensive_share"] = 100 * yearly["any_data_intensive_jobs"] / yearly["total_jobs"]
+
+fig = px.line(
+    yearly.sort_values("year"),
     x="year",
-    y="share_data_intensive",
+    y="data_intensive_share",
     markers=True,
-    title="Share of data-intensive job adverts over time (1% sample)",
-    labels={"year": "Year", "share_data_intensive": "Data-intensive jobs (%)"},
-    height=450,
+    title="Share of data-intensive job adverts over time",
+    labels={"year":"Year", "data_intensive_share":"Data-intensive jobs (%)"}
 )
-fig_econ.show()
+fig.show()
 
 
-
-
-
-latest_year = occupation_df["year"].max()
-latest_occ = occupation_df[occupation_df["year"] == latest_year].copy()
 
 top_n = 20
-top_latest = (
-    latest_occ
-    .sort_values("total_data_share", ascending=False)
+top_each_year = (
+    occupation_df.sort_values(["year","total_data_share"], ascending=[True,False])
+    .groupby("year")
     .head(top_n)
-    .reset_index(drop=True)
 )
 
-top_melt = top_latest.melt(
-    id_vars=["doc_BGTOcc"],
-    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
+melted = top_each_year.melt(
+    id_vars=["year","soc4"],
+    value_vars=["data_entry_share","database_share","data_analytics_share"],
     var_name="category",
-    value_name="share",
+    value_name="share"
 )
 
-category_labels = {
-    "data_entry_share": "Data entry",
-    "database_share": "Database",
-    "data_analytics_share": "Data analytics",
+label_map = {
+    "data_entry_share":"Data entry",
+    "database_share":"Database",
+    "data_analytics_share":"Data analytics"
 }
-top_melt["category_label"] = top_melt["category"].map(category_labels)
+melted["category_label"] = melted["category"].map(label_map)
 
-fig_top = px.bar(
-    top_melt,
-    x="doc_BGTOcc",
+fig = px.bar(
+    melted,
+    x="soc4",
     y="share",
     color="category_label",
-    title=f"Top {top_n} occupations by data intensity in {latest_year} (1% sample)",
-    labels={"doc_BGTOcc": "SOC code", "share": "Share of data-intensive jobs (%)", "category_label": "Layer"},
-    height=500,
+    facet_col="year",
+    facet_col_wrap=2,
+    title=f"Top {top_n} occupations by data-intensity — each year (stacked components)",
+    labels={"soc4":"SOC (4-digit)", "share":"Share (%)", "category_label":"Layer"},
+    height=900
 )
-fig_top.update_layout(barmode="stack")
-fig_top.show()
+fig.update_layout(barmode="stack")
+fig.show()
 
 
 
 
+# Placeholder: Once you provide SUT columns + join key, we'll add:
+# - read SUT
+# - clean to SICSection + Year + GVA + COMP_EMP
+# - merge with sector_df (synthetic SIC)
+# - compute OECD-style valuation metrics
 
-
-
-def weighted_mean(group, col):
-    return (group[col] * group["total_jobs"]).sum() / group["total_jobs"].sum()
-
-agg_rows = []
-for yr, g in occupation_df.groupby("year"):
-    agg_rows.append({
-        "year": yr,
-        "data_entry_share":      weighted_mean(g, "data_entry_share"),
-        "database_share":        weighted_mean(g, "database_share"),
-        "data_analytics_share":  weighted_mean(g, "data_analytics_share"),
-    })
-
-occ_year = pd.DataFrame(agg_rows)
-
-occ_year_melt = occ_year.melt(
-    id_vars=["year"],
-    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
-    var_name="category",
-    value_name="share",
-)
-occ_year_melt["category_label"] = occ_year_melt["category"].map(category_labels)
-
-fig_layers = px.area(
-    occ_year_melt.sort_values("year"),
-    x="year",
-    y="share",
-    color="category_label",
-    title="Evolution of data-related work (entry / database / analytics)",
-    labels={"year": "Year", "share": "Avg share in data-intensive jobs (%)", "category_label": "Layer"},
-    height=450,
-)
-fig_layers.show()
-
-
-
-
-
-
-
-top_codes = top_latest["doc_BGTOcc"].unique()
-heat_df = occupation_df[occupation_df["doc_BGTOcc"].isin(top_codes)].copy()
-
-pivot = heat_df.pivot_table(
-    index="doc_BGTOcc",
-    columns="year",
-    values="total_data_share",
-    aggfunc="mean",
-)
-
-fig_heat = px.imshow(
-    pivot.sort_index(),
-    aspect="auto",
-    labels=dict(x="Year", y="SOC code", color="Total data intensity (%)"),
-    title=f"Data intensity over time for top {top_n} occupations (1% sample)",
-    height=600,
-)
-fig_heat.show()
-
-
-
-
-
-
-
-
-target_soc = str(top_codes[0])   # or e.g. '2135' etc.
-
-soc_trend = occupation_df[occupation_df["doc_BGTOcc"] == target_soc].copy()
-soc_melt = soc_trend.melt(
-    id_vars=["year"],
-    value_vars=["data_entry_share", "database_share", "data_analytics_share"],
-    var_name="category",
-    value_name="share",
-)
-soc_melt["category_label"] = soc_melt["category"].map(category_labels)
-
-fig_soc = px.line(
-    soc_melt.sort_values("year"),
-    x="year",
-    y="share",
-    color="category_label",
-    markers=True,
-    title=f"Data-layer mix over time for SOC {target_soc}",
-    labels={"year": "Year", "share": "Share in data-intensive jobs (%)", "category_label": "Layer"},
-    height=450,
-)
-fig_soc.show()
-
+print("SUT merge placeholder ready — send SUT schema/columns when you have it.")
 
 
