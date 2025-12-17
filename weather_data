@@ -1,3 +1,54 @@
+# -------------------------------------------------------------
+# Step 3: Load data into memory (per year)
+# -------------------------------------------------------------
+
+all_data = {}   # <-- THIS is what was missing
+total_jobs = 0
+
+if PARQUET_PATH:
+    print(f"Loading unified parquet from {PARQUET_PATH}")
+    full_df = spark.read.parquet(PARQUET_PATH)
+    full_df = full_df.withColumn("date", F.to_date("date"))
+
+    for yr in years_to_process:
+        df_yr = full_df.filter(F.year("date") == yr)
+        cnt = df_yr.count()
+        all_data[yr] = df_yr
+        total_jobs += cnt
+        print(f"Year {yr}: {cnt:,} records")
+
+else:
+    for yr in years_to_process:
+        print(f"Loading CSV data for year {yr}")
+        df = (
+            spark.read
+            .option("header", True)
+            .option("multiline", True)
+            .csv(ALL_PATHS[yr]["input_csv"])
+            .select(
+                "date",
+                "job_id",
+                "soc_2020",
+                "job_title",
+                F.col("full_text").cast("string")
+            )
+            .filter(F.col("full_text").isNotNull())
+        )
+
+        df = df.withColumn("date", F.to_date("date"))
+        cnt = df.count()
+        all_data[yr] = df
+        total_jobs += cnt
+        print(f"Year {yr}: {cnt:,} records")
+
+print(f"Total jobs loaded: {total_jobs:,}")
+
+
+
+
+
+
+
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import *
