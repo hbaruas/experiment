@@ -1,3 +1,18 @@
+# Spark side
+print("defaultParallelism:", spark.sparkContext.defaultParallelism)
+print("executor instances:", spark.sparkContext.getConf().get("spark.executor.instances"))
+print("executor memory:", spark.sparkContext.getConf().get("spark.executor.memory"))
+print("executor cores:", spark.sparkContext.getConf().get("spark.executor.cores"))
+print("mem overhead:", spark.sparkContext.getConf().get("spark.executor.memoryOverhead"))
+print("python worker reuse:", spark.sparkContext.getConf().get("spark.python.worker.reuse"))
+
+# SpaCy side (driver check)
+import spacy
+print("spacy version:", spacy.__version__)
+print("md installed:", spacy.util.is_package("en_core_web_md"))
+print("lg installed:", spacy.util.is_package("en_core_web_lg"))
+
+
 import spacy
 import pandas as pd
 import gc
