@@ -1,66 +1,75 @@
-# Spark side
-print("defaultParallelism:", spark.sparkContext.defaultParallelism)
-print("executor instances:", spark.sparkContext.getConf().get("spark.executor.instances"))
-print("executor memory:", spark.sparkContext.getConf().get("spark.executor.memory"))
-print("executor cores:", spark.sparkContext.getConf().get("spark.executor.cores"))
-print("mem overhead:", spark.sparkContext.getConf().get("spark.executor.memoryOverhead"))
-print("python worker reuse:", spark.sparkContext.getConf().get("spark.python.worker.reuse"))
+# =========================================================
+# NLP JOB FEATURE EXTRACTION (DAP-SAFE, OECD-STYLE)
+# - Uses sentence "chunks" + semantic similarity to the concept "data"
+# - Avoids spaCy parser / noun_chunks (too heavy for Spark at scale)
+# - Throttles Spark concurrency to prevent executor deaths / RPC disconnects
+# =========================================================
 
-# SpaCy side (driver check)
-import spacy
-print("spacy version:", spacy.__version__)
-print("md installed:", spacy.util.is_package("en_core_web_md"))
-print("lg installed:", spacy.util.is_package("en_core_web_lg"))
-
-
-import spacy
-import pandas as pd
 import gc
+import pandas as pd
+import spacy
+
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, DoubleType, ArrayType
 )
 
-# =========================================================
-# Spark stability knobs (set once on driver)
-# =========================================================
-spark.conf.set("spark.python.worker.reuse", "true")
+# -----------------------------
+# CONFIG (tune these safely)
+# -----------------------------
+SIM_THRESHOLD = 0.35   # start ~0.35; tune later (OECD-style intensity threshold)
+TOP_K = 7              # keep top K chunks (truncate to avoid bloat)
+BATCH_SIZE = 64        # inside executor; keep moderate
+MAX_CHARS_PER_CHUNK = 160  # truncate chunk text for storage safety
+
+# Concurrency control (THIS prevents the DAP RPC crash)
+DEFAULT_PAR = int(spark.sparkContext.defaultParallelism)
+# Safe partitions for heavy Python NLP: 1x to 2x default parallelism
+N_PARTITIONS = max(20, min(DEFAULT_PAR * 2, 120))
+
+print("[NLP] defaultParallelism:", DEFAULT_PAR)
+print("[NLP] Using partitions:", N_PARTITIONS)
+print("[NLP] SIM_THRESHOLD:", SIM_THRESHOLD, "TOP_K:", TOP_K, "BATCH_SIZE:", BATCH_SIZE)
+
+# Recommended (safe) spark conf for Pandas UDF
 spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "true")
+spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "10000")
+spark.conf.set("spark.python.worker.reuse", "true")
 
 # =========================================================
-# Config
-# =========================================================
-TOP_K = 7
-SIM_THRESHOLD = 0.35   # keep your original value if different
-BATCH_SIZE = 32        # lower = less RAM spikes
-MAX_CHARS = 5000       # hard cap per advert to prevent pathological texts
-
-# =========================================================
-# 1) Singleton model loader (per Python worker process)
+# 1) SINGLETON MODEL LOADER (per executor)
 # =========================================================
 _SPACY_MODEL = None
 
 def get_spacy_model():
+    """
+    Load once per executor. Use MD vectors for semantic similarity.
+    Disable heavy pipes.
+    Use sentencizer to get sentences without dependency parser.
+    """
     global _SPACY_MODEL
     if _SPACY_MODEL is None:
-        # IMPORTANT: md is far safer than lg on clusters
-        # Keep parser because noun_chunks needs it
-        try:
-            _SPACY_MODEL = spacy.load("en_core_web_md", exclude=["ner", "lemmatizer"])
-        except OSError:
-            # If md isn't available, fail loudly (sm vectors are not suitable for similarity)
-            raise RuntimeError(
-                "SpaCy model 'en_core_web_md' not found on executors. "
-                "Install it on the cluster/image. Avoid falling back to 'sm' for vector similarity."
-            )
+        print("Loading spaCy model on executor...")
+        _SPACY_MODEL = spacy.load(
+            "en_core_web_md",
+            exclude=["ner", "lemmatizer", "attribute_ruler"]
+        )
+        # IMPORTANT: do NOT use dependency parser; we add sentencizer instead
+        if "parser" in _SPACY_MODEL.pipe_names:
+            _SPACY_MODEL.disable_pipes("parser")
 
-        # Prevent extremely long texts from exploding memory
+        # Sentencizer gives doc.sents cheaply
+        if "sentencizer" not in _SPACY_MODEL.pipe_names:
+            _SPACY_MODEL.add_pipe("sentencizer")
+
+        # Optional: prevent extreme text from crashing
         _SPACY_MODEL.max_length = 2_000_000
 
     return _SPACY_MODEL
 
+
 # =========================================================
-# 2) Schema
+# 2) SCHEMA (matches your downstream expectations)
 # =========================================================
 job_features_schema = StructType([
     StructField("date", StringType()),
@@ -73,58 +82,58 @@ job_features_schema = StructType([
     StructField("top_sims", ArrayType(DoubleType())),
 ])
 
-# =========================================================
-# 3) Worker function
-# =========================================================
-def extract_job_features_production(iterator):
-    nlp = get_spacy_model()
 
-    # Get target vector WITHOUT running the full pipeline
-    target_vec = nlp.vocab["data"].vector
+# =========================================================
+# 3) WORKER FUNCTION (mapInPandas)
+# =========================================================
+def extract_job_features_oecd_style(iterator):
+    nlp = get_spacy_model()
+    target = nlp("data")  # target concept vector
 
     for pdf in iterator:
-        # Defensive: required columns
-        for req in ["full_text", "job_id", "soc_2020", "date"]:
-            if req not in pdf.columns:
-                # return empty result for this batch
-                yield pd.DataFrame([], columns=[f.name for f in job_features_schema.fields])
+        # Defensive checks
+        for col in ["full_text", "job_id", "soc_2020", "date"]:
+            if col not in pdf.columns:
+                # yield empty frame with expected columns
+                yield pd.DataFrame(columns=[f.name for f in job_features_schema.fields])
                 continue
 
-        # Clean + cap text length (critical to avoid huge memory spikes)
-        texts = (
-            pdf["full_text"]
-            .fillna("")
-            .astype(str)
-            .str.slice(0, MAX_CHARS)
-            .tolist()
-        )
+        pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
 
-        # Parse in small batches; n_process=1 inside executors
+        texts = pdf["full_text"].tolist()
         docs = nlp.pipe(texts, batch_size=BATCH_SIZE, n_process=1)
 
         out = []
+
+        # iterate doc-by-doc
         for doc, job_id, soc, date in zip(docs, pdf["job_id"], pdf["soc_2020"], pdf["date"]):
             try:
-                data_chunks = []
                 total_chunks = 0
+                data_chunks = []
 
-                # noun_chunks requires parser; expensive but matches your method
-                for chunk in doc.noun_chunks:
+                # OECD-style: scan chunks of text and count "data-related" ones
+                for sent in doc.sents:
+                    txt = sent.text.strip()
+                    if not txt:
+                        continue
+
                     total_chunks += 1
 
-                    if chunk.has_vector and target_vec is not None and len(target_vec) > 0:
-                        sim = float(chunk.vector.dot(target_vec) / (chunk.vector_norm * (target_vec**2).sum()**0.5 + 1e-12))
+                    # Similarity only meaningful if vectors exist
+                    if sent.has_vector:
+                        sim = float(sent.similarity(target))
                         if sim >= SIM_THRESHOLD:
-                            cleaned = chunk.text.strip().lower()[:100]
+                            cleaned = txt.lower().replace("\n", " ").strip()[:MAX_CHARS_PER_CHUNK]
                             data_chunks.append((cleaned, sim))
 
                 n_data = len(data_chunks)
-                if n_data:
+
+                if n_data > 0:
                     data_chunks.sort(key=lambda x: x[1], reverse=True)
-                    top_k = data_chunks[:TOP_K]
-                    top_chunks = [t for t, _ in top_k]
-                    top_sims = [s for _, s in top_k]
-                    avg_sim = sum(s for _, s in data_chunks) / n_data
+                    top_items = data_chunks[:TOP_K]
+                    top_chunks = [t for t, _ in top_items]
+                    top_sims = [s for _, s in top_items]
+                    avg_sim = float(sum(s for _, s in data_chunks) / n_data)
                 else:
                     top_chunks, top_sims, avg_sim = [], [], 0.0
 
@@ -138,16 +147,18 @@ def extract_job_features_production(iterator):
                     "top_chunks": top_chunks,
                     "top_sims": top_sims
                 })
+
             except Exception:
-                # swallow bad rows, don't kill partition
+                # Never crash a partition for a few bad rows
                 continue
 
         yield pd.DataFrame(out)
 
+
 # =========================================================
-# 4) Execution loop
+# 4) EXECUTION LOOP (DAP SAFE)
 # =========================================================
-for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
+for yr in tqdm(years_to_process, desc="NLP job feature extraction (OECD-style)"):
     out_base = ALL_PATHS[yr]["job_features"]
 
     if not FORCE_RECOMPUTE:
@@ -162,19 +173,32 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
 
     df = all_data[yr]
 
-    # CRITICAL: make tasks smaller than before for SpaCy parsing
-    target_parts = max(2000, spark.sparkContext.defaultParallelism * 8)
-    print(f"[NLP] Repartitioning to {target_parts} partitions")
-    df_part = df.repartition(target_parts)
+    # Keep only needed cols to reduce memory/shuffle
+    # Adjust column names if your raw schema differs
+    needed = ["date", "job_id", "soc_2020", "full_text"]
+    df = df.select(*[c for c in needed if c in df.columns])
 
-    job_feat = df_part.mapInPandas(extract_job_features_production, schema=job_features_schema)
+    print(f"[NLP] Year {yr} input cols:", df.columns)
 
+    # Throttle concurrency (prevents RPC disconnects)
+    df_part = df.repartition(N_PARTITIONS)
+
+    job_feat = df_part.mapInPandas(extract_job_features_oecd_style, schema=job_features_schema)
+
+    # Add year/month columns safely
     job_feat = (
         job_feat
-        .withColumn("year", F.year(F.to_date("date")))
-        .withColumn("month", F.month(F.to_date("date")))
+        .withColumn("date_parsed", F.to_date(F.col("date")))
+        .withColumn("year", F.year(F.col("date_parsed")))
+        .withColumn("month", F.month(F.col("date_parsed")))
+        .drop("date_parsed")
     )
 
+    # Optional small sanity sample (cheap)
+    print("[NLP] Sample job_feat rows:")
+    job_feat.limit(5).show(truncate=False)
+
+    # Write (verify_read=False is good for huge)
     latest_written = safe_write_parquet_s3a(
         job_feat,
         out_base,
@@ -185,6 +209,13 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
     print(f"[NLP] Year {yr} written to: {latest_written}")
 
     # Cleanup
+    try:
+        df_part.unpersist()
+    except Exception:
+        pass
+
     del df_part
     del job_feat
     gc.collect()
+
+print("\n[NLP] DONE — OECD-style job_features extraction completed for all years.")
