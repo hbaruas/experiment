@@ -1,4 +1,157 @@
 # =========================================================
+# DAP PRE-FLIGHT DIAGNOSTICS (run BEFORE the NLP cell)
+# =========================================================
+
+import os, sys, platform, textwrap
+from pyspark.sql import functions as F
+
+print("\n" + "="*80)
+print("DAP PRE-FLIGHT DIAGNOSTICS")
+print("="*80)
+
+# ---------------------------------------------------------
+# 1) Spark basics
+# ---------------------------------------------------------
+sc = spark.sparkContext
+conf = sc.getConf()
+
+print("\n[SPARK] Version:", spark.version)
+print("[SPARK] Master :", sc.master)
+print("[SPARK] AppId  :", sc.applicationId)
+print("[SPARK] defaultParallelism:", sc.defaultParallelism)
+
+# Helper to safely fetch conf keys
+def get_conf(key, default="(not set)"):
+    try:
+        v = conf.get(key)
+        return v if v is not None else default
+    except Exception:
+        return default
+
+# ---------------------------------------------------------
+# 2) Key Spark configs that matter for executor loss / RPC
+# ---------------------------------------------------------
+KEYS = [
+    # resources
+    "spark.executor.instances",
+    "spark.executor.cores",
+    "spark.executor.memory",
+    "spark.executor.memoryOverhead",
+    "spark.driver.memory",
+    "spark.driver.cores",
+
+    # dynamic allocation / shuffle
+    "spark.dynamicAllocation.enabled",
+    "spark.dynamicAllocation.minExecutors",
+    "spark.dynamicAllocation.maxExecutors",
+    "spark.sql.shuffle.partitions",
+    "spark.sql.adaptive.enabled",
+
+    # timeouts/heartbeats (common cause of lost executor messages)
+    "spark.network.timeout",
+    "spark.executor.heartbeatInterval",
+    "spark.rpc.askTimeout",
+    "spark.sql.broadcastTimeout",
+
+    # python / arrow
+    "spark.sql.execution.arrow.pyspark.enabled",
+    "spark.python.worker.reuse",
+    "spark.python.worker.memory",
+    "spark.executorEnv.PYSPARK_PYTHON",
+    "spark.pyspark.python",
+
+    # speculation can cause weird retries
+    "spark.speculation",
+
+    # k8s specific hints (may or may not exist)
+    "spark.kubernetes.executor.request.cores",
+    "spark.kubernetes.executor.limit.cores",
+    "spark.kubernetes.executor.request.memory",
+    "spark.kubernetes.executor.limit.memory",
+    "spark.kubernetes.driver.request.cores",
+    "spark.kubernetes.driver.request.memory",
+]
+
+print("\n[SPARK CONF] Key settings:")
+for k in KEYS:
+    print(f"  - {k}: {get_conf(k)}")
+
+# ---------------------------------------------------------
+# 3) Driver environment diagnostics
+# ---------------------------------------------------------
+print("\n[DRIVER ENV]")
+print("  - Python:", sys.version.replace("\n", " "))
+print("  - Platform:", platform.platform())
+print("  - PYSPARK_PYTHON:", os.environ.get("PYSPARK_PYTHON"))
+print("  - CONDA_DEFAULT_ENV:", os.environ.get("CONDA_DEFAULT_ENV"))
+print("  - User:", os.environ.get("USER"))
+
+# spaCy availability on driver (NOT executors)
+try:
+    import spacy
+    print("\n[SPACY DRIVER CHECK]")
+    print("  - spacy version:", spacy.__version__)
+    print("  - en_core_web_sm installed:", spacy.util.is_package("en_core_web_sm"))
+    print("  - en_core_web_md installed:", spacy.util.is_package("en_core_web_md"))
+    print("  - en_core_web_lg installed:", spacy.util.is_package("en_core_web_lg"))
+except Exception as e:
+    print("\n[SPACY DRIVER CHECK] spaCy import FAILED:", repr(e))
+
+# ---------------------------------------------------------
+# 4) Data sanity: row counts + partitions per year
+#    (cheap-ish; count() triggers jobs, so do it only if you want)
+# ---------------------------------------------------------
+print("\n[DATA SANITY]")
+print("  - years_to_process:", years_to_process)
+
+def show_df_partitions(df, label="df"):
+    try:
+        n_part = df.rdd.getNumPartitions()
+        print(f"  - {label} partitions: {n_part}")
+    except Exception as e:
+        print(f"  - {label} partitions: (error) {repr(e)}")
+
+# partition info without counting
+for yr in years_to_process:
+    try:
+        df = all_data[yr]
+        show_df_partitions(df, label=f"all_data[{yr}]")
+    except Exception as e:
+        print(f"  - all_data[{yr}] missing/unreadable: {repr(e)}")
+
+# optional: row counts (turn on if helpful)
+DO_COUNTS = False  # set True if you want counts (runs Spark jobs)
+
+if DO_COUNTS:
+    for yr in years_to_process:
+        df = all_data[yr]
+        n = df.count()
+        print(f"  - Year {yr} rows: {n:,}")
+
+# ---------------------------------------------------------
+# 5) Tiny executor stability test
+#    If this fails, your cluster is unstable regardless of code.
+# ---------------------------------------------------------
+print("\n[EXECUTOR STABILITY TEST] running tiny job...")
+try:
+    tiny = spark.range(0, 200000).repartition(40)
+    out = tiny.select((F.col("id") * 3).alias("x")).agg(F.sum("x").alias("sum_x")).collect()[0]["sum_x"]
+    print("  - OK. sum_x =", out)
+except Exception as e:
+    print("  - FAILED:", repr(e))
+
+print("\n" + "="*80)
+print("END DIAGNOSTICS")
+print("="*80 + "\n")
+
+
+
+
+
+
+
+
+# =========================================================
 # DAP-SAFE NLP FEATURE EXTRACTION (DRIVER-ONLY, NO EXECUTORS)
 # Goal: avoid executor death / RPC disconnects.
 # Methodology: same as OECD-style you used:
