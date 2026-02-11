@@ -219,3 +219,74 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction (OECD-style)")
     gc.collect()
 
 print("\n[NLP] DONE — OECD-style job_features extraction completed for all years.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+print(f"\n[NLP] Year {yr} starting...")
+df = all_data[yr]
+
+# Keep only needed cols to reduce shuffle/memory
+needed = ["date", "job_id", "soc_2020", "full_text"]
+df = df.select(*[c for c in needed if c in df.columns])
+
+# ------------------------------------------------------------
+# PARTITIONING (OLD STYLE — SAME AS YOUR SCREENSHOT)
+# ------------------------------------------------------------
+print("[NLP] Counting rows to size partitions (this triggers a Spark job)...")
+total_rows = df.count()
+
+estimated_row_size = 1000  # bytes per row (your assumption)
+target_partition_bytes = 128 * 1024 * 1024  # 128MB
+
+num_partitions = max(
+    16,
+    int((total_rows * estimated_row_size) / target_partition_bytes)
+)
+
+# optional safety cap to avoid spawning too many python workers at once
+# (important on DAP when using spaCy)
+num_partitions = min(num_partitions, 200)
+
+print(f"[NLP] Year {yr} rows={total_rows:,} partitions={num_partitions}")
+
+df_part = df.repartition(num_partitions)
+
+# Run the UDF
+job_feat = df_part.mapInPandas(extract_job_features_oecd_style, schema=job_features_schema)
+
+# Add year/month columns safely
+job_feat = (
+    job_feat
+    .withColumn("date_parsed", F.to_date(F.col("date")))
+    .withColumn("year", F.year(F.col("date_parsed")))
+    .withColumn("month", F.month(F.col("date_parsed")))
+    .drop("date_parsed")
+)
+
+print("[NLP] Sample job_feat rows:")
+job_feat.limit(5).show(truncate=False)
+
+latest_written = safe_write_parquet_s3a(
+    job_feat,
+    out_base,
+    mode="overwrite",
+    create_version=True,
+    verify_read=False
+)
+
+print(f"[NLP] Year {yr} written to: {latest_written}")
+
+# Cleanup
+del df_part
+del job_feat
+gc.collect()
