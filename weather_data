@@ -1,7 +1,5 @@
 # =========================================================
-# NLP JOB FEATURE EXTRACTION (DAP-SAFE) — OLD PARTITION LOGIC
-# (Count rows -> estimate bytes -> target 128MB partitions)
-# Methodology: identical extraction logic; partitioning matches your old screenshot.
+# NLP JOB FEATURE EXTRACTION (DAP-OPTIMIZED)
 # =========================================================
 
 import spacy
@@ -15,36 +13,39 @@ from pyspark.sql.types import (
 )
 
 # -----------------------------
-# USER TUNABLES (KEEP SIMPLE)
+# USER TUNABLES (DAP-SAFE)
 # -----------------------------
-SIM_THRESHOLD = 0.55   # <-- your threshold
-TOP_K = 10             # <-- top chunks to store
+SIM_THRESHOLD = 0.55   
+TOP_K = 10             
 FORCE_RECOMPUTE = False
 
-# Partitioning (matches your old approach)
-ESTIMATED_ROW_SIZE_BYTES = 1000
-TARGET_PARTITION_BYTES = 128 * 1024 * 1024  # 128MB
+# Memory Management
+# 16GB is tight; we increase partition size and decrease the cap to avoid overhead
+ESTIMATED_ROW_SIZE_BYTES = 5000 
+TARGET_PARTITION_BYTES = 256 * 1024 * 1024  # 256MB chunks
 MIN_PARTITIONS = 16
-MAX_PARTITIONS_CAP = 200   # IMPORTANT on DAP to prevent too many Python workers
+MAX_PARTITIONS_CAP = 64  # Prevents spawning too many Python workers at once
 
-# spaCy batch
-SPACY_BATCH_SIZE = 50
-SPACY_N_PROCESS = 1        # keep 1 inside executors
+# spaCy settings
+SPACY_BATCH_SIZE = 25    # Reduced batch size to save RAM
+SPACY_N_PROCESS = 1      
+MAX_TEXT_CHARS = 50000   # Safety cap for extremely long job ads
 
 # =========================================================
-# 1) SINGLETON MODEL LOADER (per executor)
+# 1) SINGLETON MODEL LOADER
 # =========================================================
 _SPACY_MODEL = None
 
 def get_spacy_model():
     global _SPACY_MODEL
     if _SPACY_MODEL is None:
-        print("Loading SpaCy model on executor...")
+        print("Loading SpaCy model (md) on executor...")
         try:
-            _SPACY_MODEL = spacy.load("en_core_web_lg", exclude=["lemmatizer", "ner"])
+            # 'md' has vectors but is much smaller than 'lg'
+            _SPACY_MODEL = spacy.load("en_core_web_md", exclude=["ner", "lemmatizer"])
         except Exception:
-            print("Warning: 'en_core_web_lg' not found, falling back to 'sm'")
-            _SPACY_MODEL = spacy.load("en_core_web_sm", exclude=["lemmatizer", "ner"])
+            print("Warning: 'en_core_web_md' not found, falling back to 'sm'")
+            _SPACY_MODEL = spacy.load("en_core_web_sm", exclude=["ner", "lemmatizer"])
     return _SPACY_MODEL
 
 # =========================================================
@@ -62,21 +63,23 @@ job_features_schema = StructType([
 ])
 
 # =========================================================
-# 3) WORKER FUNCTION (mapInPandas)
+# 3) WORKER FUNCTION
 # =========================================================
 def extract_job_features_oecd_style(iterator):
     nlp = get_spacy_model()
-    target = nlp("data")  # vector once per executor
+    target = nlp("data")  # Pre-vectorized "target"
 
     for pdf in iterator:
-        # Defensive: ensure required columns exist
+        # Fill missing columns and enforce string type
         for col in ["full_text", "job_id", "soc_2020", "date"]:
             if col not in pdf.columns:
-                pdf[col] = None
-
-        pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
+                pdf[col] = ""
+        
+        # Trim text length to prevent OOM on massive single rows
+        pdf["full_text"] = pdf["full_text"].fillna("").astype(str).str.slice(0, MAX_TEXT_CHARS)
 
         texts = pdf["full_text"].tolist()
+        # nlp.pipe is efficient but we keep batch small for memory
         docs = nlp.pipe(texts, batch_size=SPACY_BATCH_SIZE, n_process=SPACY_N_PROCESS)
 
         out_rows = []
@@ -85,6 +88,7 @@ def extract_job_features_oecd_style(iterator):
                 total_chunks = 0
                 data_chunks = []
 
+                # Requires 'parser' component (default in md/lg)
                 for chunk in doc.noun_chunks:
                     total_chunks += 1
                     if chunk.has_vector:
@@ -114,15 +118,17 @@ def extract_job_features_oecd_style(iterator):
                     "top_sims": top_sims,
                 })
             except Exception:
-                # Do not kill partition on one bad row
                 continue
 
         yield pd.DataFrame(out_rows)
 
 # =========================================================
-# 4) EXECUTION LOOP (OLD PARTITION LOGIC)
-# Requires: years_to_process, ALL_PATHS, all_data, read_latest_version, safe_write_parquet_s3a
+# 4) EXECUTION LOOP
 # =========================================================
+
+# Step 0: Set Spark stability configs to prevent "Connection Closed"
+spark.conf.set("spark.network.timeout", "800s")
+spark.conf.set("spark.executor.heartbeatInterval", "60s")
 
 print("\n[NLP] Spark sanity:")
 print("defaultParallelism:", spark.sparkContext.defaultParallelism)
@@ -130,27 +136,22 @@ print("defaultParallelism:", spark.sparkContext.defaultParallelism)
 for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
     out_base = ALL_PATHS[yr]["job_features"]
 
-    # Skip if already exists (unless FORCE_RECOMPUTE)
     if not FORCE_RECOMPUTE:
         try:
             _df_existing, latest_path = read_latest_version(out_base)
-            print(f"\n[SKIP] Year {yr} job_features already exist at: {latest_path}")
+            print(f"\n[SKIP] Year {yr} exists at: {latest_path}")
             continue
         except Exception:
-            pass  # not found -> compute
+            pass 
 
     print(f"\n[NLP] Year {yr} starting...")
-
     df = all_data[yr]
-
-    # Keep only columns needed (reduces shuffle + memory)
+    
     needed = ["date", "job_id", "soc_2020", "full_text"]
     df = df.select(*[c for c in needed if c in df.columns])
 
-    # ---- OLD STYLE PARTITION ESTIMATION (YOUR SCREENSHOT) ----
-    print("[NLP] Counting rows to size partitions (this triggers a Spark job)...")
+    # Re-calculate partitions based on row count
     total_rows = df.count()
-
     num_partitions = max(
         MIN_PARTITIONS,
         int((total_rows * ESTIMATED_ROW_SIZE_BYTES) / TARGET_PARTITION_BYTES)
@@ -161,10 +162,10 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
 
     df_part = df.repartition(num_partitions)
 
-    # Run NLP
+    # Run mapInPandas
     job_feat = df_part.mapInPandas(extract_job_features_oecd_style, schema=job_features_schema)
 
-    # Add year/month from date
+    # Add time columns
     job_feat = (
         job_feat
         .withColumn("date_parsed", F.to_date(F.col("date")))
@@ -173,11 +174,7 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
         .drop("date_parsed")
     )
 
-    print("[NLP] job_feat columns:", job_feat.columns)
-    print("[NLP] job_feat sample:")
-    job_feat.limit(5).show(truncate=False)
-
-    # Write (verify_read=False avoids expensive read-back)
+    # Write Result
     latest_written = safe_write_parquet_s3a(
         job_feat,
         out_base,
@@ -186,11 +183,11 @@ for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
         verify_read=False
     )
 
-    print(f"[NLP] Year {yr} written to: {latest_written}")
+    print(f"[NLP] Year {yr} complete: {latest_written}")
 
-    # Cleanup (driver-side)
+    # Explicit memory cleanup
     del df_part
     del job_feat
     gc.collect()
 
-print("\n[NLP] DONE — job feature extraction completed.")
+print("\n[NLP] DONE — All years processed.")
