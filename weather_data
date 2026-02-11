@@ -1,198 +1,77 @@
 # =========================================================
-# DAP PRE-FLIGHT DIAGNOSTICS (run BEFORE the NLP cell)
+# NLP JOB FEATURE EXTRACTION (DAP-SAFE, OECD-IDENTICAL LOGIC)
 # =========================================================
 
-import os, sys, platform, textwrap
-from pyspark.sql import functions as F
-
-print("\n" + "="*80)
-print("DAP PRE-FLIGHT DIAGNOSTICS")
-print("="*80)
-
-# ---------------------------------------------------------
-# 1) Spark basics
-# ---------------------------------------------------------
-sc = spark.sparkContext
-conf = sc.getConf()
-
-print("\n[SPARK] Version:", spark.version)
-print("[SPARK] Master :", sc.master)
-print("[SPARK] AppId  :", sc.applicationId)
-print("[SPARK] defaultParallelism:", sc.defaultParallelism)
-
-# Helper to safely fetch conf keys
-def get_conf(key, default="(not set)"):
-    try:
-        v = conf.get(key)
-        return v if v is not None else default
-    except Exception:
-        return default
-
-# ---------------------------------------------------------
-# 2) Key Spark configs that matter for executor loss / RPC
-# ---------------------------------------------------------
-KEYS = [
-    # resources
-    "spark.executor.instances",
-    "spark.executor.cores",
-    "spark.executor.memory",
-    "spark.executor.memoryOverhead",
-    "spark.driver.memory",
-    "spark.driver.cores",
-
-    # dynamic allocation / shuffle
-    "spark.dynamicAllocation.enabled",
-    "spark.dynamicAllocation.minExecutors",
-    "spark.dynamicAllocation.maxExecutors",
-    "spark.sql.shuffle.partitions",
-    "spark.sql.adaptive.enabled",
-
-    # timeouts/heartbeats (common cause of lost executor messages)
-    "spark.network.timeout",
-    "spark.executor.heartbeatInterval",
-    "spark.rpc.askTimeout",
-    "spark.sql.broadcastTimeout",
-
-    # python / arrow
-    "spark.sql.execution.arrow.pyspark.enabled",
-    "spark.python.worker.reuse",
-    "spark.python.worker.memory",
-    "spark.executorEnv.PYSPARK_PYTHON",
-    "spark.pyspark.python",
-
-    # speculation can cause weird retries
-    "spark.speculation",
-
-    # k8s specific hints (may or may not exist)
-    "spark.kubernetes.executor.request.cores",
-    "spark.kubernetes.executor.limit.cores",
-    "spark.kubernetes.executor.request.memory",
-    "spark.kubernetes.executor.limit.memory",
-    "spark.kubernetes.driver.request.cores",
-    "spark.kubernetes.driver.request.memory",
-]
-
-print("\n[SPARK CONF] Key settings:")
-for k in KEYS:
-    print(f"  - {k}: {get_conf(k)}")
-
-# ---------------------------------------------------------
-# 3) Driver environment diagnostics
-# ---------------------------------------------------------
-print("\n[DRIVER ENV]")
-print("  - Python:", sys.version.replace("\n", " "))
-print("  - Platform:", platform.platform())
-print("  - PYSPARK_PYTHON:", os.environ.get("PYSPARK_PYTHON"))
-print("  - CONDA_DEFAULT_ENV:", os.environ.get("CONDA_DEFAULT_ENV"))
-print("  - User:", os.environ.get("USER"))
-
-# spaCy availability on driver (NOT executors)
-try:
-    import spacy
-    print("\n[SPACY DRIVER CHECK]")
-    print("  - spacy version:", spacy.__version__)
-    print("  - en_core_web_sm installed:", spacy.util.is_package("en_core_web_sm"))
-    print("  - en_core_web_md installed:", spacy.util.is_package("en_core_web_md"))
-    print("  - en_core_web_lg installed:", spacy.util.is_package("en_core_web_lg"))
-except Exception as e:
-    print("\n[SPACY DRIVER CHECK] spaCy import FAILED:", repr(e))
-
-# ---------------------------------------------------------
-# 4) Data sanity: row counts + partitions per year
-#    (cheap-ish; count() triggers jobs, so do it only if you want)
-# ---------------------------------------------------------
-print("\n[DATA SANITY]")
-print("  - years_to_process:", years_to_process)
-
-def show_df_partitions(df, label="df"):
-    try:
-        n_part = df.rdd.getNumPartitions()
-        print(f"  - {label} partitions: {n_part}")
-    except Exception as e:
-        print(f"  - {label} partitions: (error) {repr(e)}")
-
-# partition info without counting
-for yr in years_to_process:
-    try:
-        df = all_data[yr]
-        show_df_partitions(df, label=f"all_data[{yr}]")
-    except Exception as e:
-        print(f"  - all_data[{yr}] missing/unreadable: {repr(e)}")
-
-# optional: row counts (turn on if helpful)
-DO_COUNTS = False  # set True if you want counts (runs Spark jobs)
-
-if DO_COUNTS:
-    for yr in years_to_process:
-        df = all_data[yr]
-        n = df.count()
-        print(f"  - Year {yr} rows: {n:,}")
-
-# ---------------------------------------------------------
-# 5) Tiny executor stability test
-#    If this fails, your cluster is unstable regardless of code.
-# ---------------------------------------------------------
-print("\n[EXECUTOR STABILITY TEST] running tiny job...")
-try:
-    tiny = spark.range(0, 200000).repartition(40)
-    out = tiny.select((F.col("id") * 3).alias("x")).agg(F.sum("x").alias("sum_x")).collect()[0]["sum_x"]
-    print("  - OK. sum_x =", out)
-except Exception as e:
-    print("  - FAILED:", repr(e))
-
-print("\n" + "="*80)
-print("END DIAGNOSTICS")
-print("="*80 + "\n")
-
-
-
-
-
-
-
-
-# =========================================================
-# DAP-SAFE NLP FEATURE EXTRACTION (DRIVER-ONLY, NO EXECUTORS)
-# Goal: avoid executor death / RPC disconnects.
-# Methodology: same as OECD-style you used:
-#   - noun_chunks
-#   - similarity to "data"
-#   - SIM_THRESHOLD
-#   - keep TOP_K chunks + avg similarity
-#
-# Tradeoff: slower, but *won't fail* on DAP because no spaCy runs on executors.
-# =========================================================
-
-import spacy
-import pandas as pd
 import gc
-from tqdm import tqdm
+import pandas as pd
+import spacy
 
+from tqdm import tqdm
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, DoubleType, ArrayType
 )
 
 # -----------------------------
-# CONFIG
+# BEST-EFFORT Spark stability
 # -----------------------------
-SIM_THRESHOLD = 0.55   # same as before
-TOP_K = 10             # same as before
-FORCE_RECOMPUTE = False
+def _safe_conf(k, v):
+    try:
+        spark.conf.set(k, v)
+        print(f"[CONF] {k} = {v}")
+    except Exception as e:
+        print(f"[CONF-SKIP] {k}: {e}")
 
-# Driver chunk size (tune if driver RAM low)
-CHUNK_ROWS = 20000
+print("\n==============================")
+print("[NLP] PRE-FLIGHT")
+print("==============================")
+print("[NLP] defaultParallelism:", spark.sparkContext.defaultParallelism)
 
-# spaCy model (driver only)
-print("[NLP-DRIVER] Loading spaCy on DRIVER...")
-try:
-    nlp = spacy.load("en_core_web_lg", exclude=["lemmatizer", "ner"])
-except Exception:
-    print("[NLP-DRIVER] Warning: en_core_web_lg not available, using sm")
-    nlp = spacy.load("en_core_web_sm", exclude=["lemmatizer", "ner"])
+_safe_conf("spark.sql.execution.arrow.pyspark.enabled", "true")
+_safe_conf("spark.python.worker.reuse", "true")
+_safe_conf("spark.network.timeout", "600s")
+_safe_conf("spark.executor.heartbeatInterval", "60s")
+_safe_conf("spark.rpc.askTimeout", "600s")
+_safe_conf("spark.speculation", "false")
 
-target = nlp("data")
+# -----------------------------
+# OECD-ish knobs (keep yours)
+# -----------------------------
+# You already have these defined elsewhere — keep them if they exist.
+# If not defined, these defaults are safe.
+SIM_THRESHOLD = globals().get("SIM_THRESHOLD", 0.45)
+TOP_K         = globals().get("TOP_K", 7)
 
+# IMPORTANT: keep batch sizes conservative in DAP
+BATCH_SIZE = 32
+
+# Partitioning: DO NOT over-partition and DO NOT count() to size partitions.
+# For 600k rows total, 40–120 partitions is usually stable.
+TARGET_PARTITIONS = int(globals().get("TARGET_PARTITIONS", 80))
+
+print(f"[NLP] SIM_THRESHOLD={SIM_THRESHOLD}, TOP_K={TOP_K}, BATCH_SIZE={BATCH_SIZE}, TARGET_PARTITIONS={TARGET_PARTITIONS}")
+
+# =========================================================
+# 1) SINGLETON MODEL LOADER (per executor)
+# =========================================================
+# DAP note: en_core_web_lg is frequently too heavy on executors.
+# Prefer md; fallback to sm only if md missing.
+_SPACY_MODEL = None
+
+def get_spacy_model():
+    global _SPACY_MODEL
+    if _SPACY_MODEL is None:
+        print("[NLP] Loading spaCy model on executor...")
+        try:
+            _SPACY_MODEL = spacy.load("en_core_web_md", exclude=["lemmatizer", "ner"])
+        except Exception:
+            print("[NLP] WARNING: en_core_web_md not found. Falling back to en_core_web_sm.")
+            _SPACY_MODEL = spacy.load("en_core_web_sm", exclude=["lemmatizer", "ner"])
+    return _SPACY_MODEL
+
+# =========================================================
+# 2) SCHEMA
+# =========================================================
 job_features_schema = StructType([
     StructField("date", StringType()),
     StructField("job_id", StringType()),
@@ -202,155 +81,122 @@ job_features_schema = StructType([
     StructField("avg_sim_data", DoubleType()),
     StructField("top_chunks", ArrayType(StringType())),
     StructField("top_sims", ArrayType(DoubleType())),
-    StructField("year", IntegerType()),
-    StructField("month", IntegerType()),
 ])
 
-def process_pdf_driver(pdf: pd.DataFrame) -> pd.DataFrame:
-    pdf = pdf.copy()
-    pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
-    texts = pdf["full_text"].tolist()
+# =========================================================
+# 3) WORKER FUNCTION (mapInPandas)
+# =========================================================
+def extract_job_features(iterator):
+    nlp = get_spacy_model()
 
-    docs = nlp.pipe(texts, batch_size=64, n_process=1)
+    # Precompute target vector once per partition
+    target = nlp("data")
 
-    out = []
-    for doc, job_id, soc, date in zip(docs, pdf["job_id"], pdf["soc_2020"], pdf["date"]):
-        total_chunks = 0
-        data_chunks = []
+    for pdf in iterator:
+        # Defensive cleaning
+        if "full_text" not in pdf.columns:
+            yield pd.DataFrame([], columns=[f.name for f in job_features_schema.fields])
+            continue
 
-        for chunk in doc.noun_chunks:
-            total_chunks += 1
-            if chunk.has_vector:
-                sim = float(chunk.similarity(target))
-                if sim >= SIM_THRESHOLD:
-                    cleaned = chunk.text.strip().lower()[:100]
-                    data_chunks.append((cleaned, sim))
+        pdf["full_text"] = pdf["full_text"].fillna("").astype(str)
 
-        n_data = len(data_chunks)
-        if n_data > 0:
-            data_chunks.sort(key=lambda x: x[1], reverse=True)
-            top_k_items = data_chunks[:TOP_K]
-            top_chunks = [t[0] for t in top_k_items]
-            top_sims = [float(t[1]) for t in top_k_items]
-            avg_sim = float(sum(s for _, s in data_chunks) / n_data)
-        else:
-            top_chunks, top_sims, avg_sim = [], [], 0.0
+        texts = pdf["full_text"].tolist()
+        docs = nlp.pipe(texts, batch_size=BATCH_SIZE, n_process=1)
 
-        # year/month derived from date string on driver (robust)
-        # if date is malformed, set None
-        try:
-            dt = pd.to_datetime(date)
-            yy = int(dt.year)
-            mm = int(dt.month)
-        except Exception:
-            yy, mm = None, None
+        out = []
+        for doc, job_id, soc, date in zip(docs, pdf["job_id"], pdf["soc_2020"], pdf["date"]):
+            total_chunks = 0
+            data_chunks = []  # (text, sim)
 
-        out.append({
-            "date": str(date),
-            "job_id": str(job_id),
-            "soc_2020": str(soc),
-            "n_chunks_total": int(total_chunks),
-            "n_chunks_data": int(n_data),
-            "avg_sim_data": float(avg_sim),
-            "top_chunks": top_chunks,
-            "top_sims": top_sims,
-            "year": yy,
-            "month": mm
-        })
+            try:
+                for chunk in doc.noun_chunks:
+                    total_chunks += 1
+                    if chunk.has_vector:
+                        sim = float(chunk.similarity(target))
+                        if sim >= SIM_THRESHOLD:
+                            cleaned = chunk.text.strip().lower()[:100]
+                            data_chunks.append((cleaned, sim))
 
-    return pd.DataFrame(out)
+                n_data = len(data_chunks)
+                if n_data:
+                    data_chunks.sort(key=lambda x: x[1], reverse=True)
+                    top_k = data_chunks[:TOP_K]
+                    top_chunks = [t for t, _ in top_k]
+                    top_sims   = [s for _, s in top_k]
+                    avg_sim    = float(sum(s for _, s in data_chunks) / n_data)
+                else:
+                    top_chunks, top_sims, avg_sim = [], [], 0.0
 
-print("\n[NLP-DRIVER] Starting driver-only extraction...")
+                out.append({
+                    "date": str(date),
+                    "job_id": str(job_id),
+                    "soc_2020": str(soc),
+                    "n_chunks_total": int(total_chunks),
+                    "n_chunks_data": int(n_data),
+                    "avg_sim_data": float(avg_sim),
+                    "top_chunks": top_chunks,
+                    "top_sims": top_sims,
+                })
+            except Exception:
+                # skip bad row; do not fail executor
+                continue
 
-for yr in tqdm(years_to_process, desc="NLP (driver-only)"):
+        yield pd.DataFrame(out)
+
+# =========================================================
+# 4) EXECUTION LOOP (DAP-safe)
+# =========================================================
+print("\n==============================")
+print("[NLP] START EXTRACTION")
+print("==============================")
+
+for yr in tqdm(years_to_process, desc="NLP job feature extraction"):
     out_base = ALL_PATHS[yr]["job_features"]
 
+    # Skip if exists (your existing skip pattern)
     if not FORCE_RECOMPUTE:
         try:
-            _df_existing, latest_path = read_latest_version(out_base)
+            _df, latest_path = read_latest_version(out_base)
             print(f"\n[SKIP] Year {yr} job_features already exist at: {latest_path}")
             continue
         except Exception:
             pass
 
-    print(f"\n[NLP-DRIVER] Year {yr} starting...")
+    print(f"\n[NLP] Year {yr} starting...")
+    df = all_data[yr]
 
-    df = all_data[yr].select("date", "job_id", "soc_2020", "full_text")
+    # Make partitions stable and modest
+    # (Avoid df.count() and avoid repartition(600) unless you truly need it)
+    df_part = df.repartition(TARGET_PARTITIONS)
 
-    total_rows = df.count()
-    print(f"[NLP-DRIVER] Year {yr} rows={total_rows:,}")
+    # Run NLP
+    job_feat = df_part.mapInPandas(extract_job_features, schema=job_features_schema)
 
-    # Convert to a local iterator (streams partitions to driver)
-    it = df.toLocalIterator()
+    # Add year/month cols for writing
+    job_feat = (
+        job_feat
+        .withColumn("year", F.year(F.to_date("date")))
+        .withColumn("month", F.month(F.to_date("date")))
+    )
 
-    buffer = []
-    out_paths = []
-
-    produced_rows = 0
-    batch_id = 0
-
-    for row in it:
-        buffer.append((row["date"], row["job_id"], row["soc_2020"], row["full_text"]))
-
-        if len(buffer) >= CHUNK_ROWS:
-            batch_id += 1
-            pdf = pd.DataFrame(buffer, columns=["date","job_id","soc_2020","full_text"])
-            out_pdf = process_pdf_driver(pdf)
-
-            out_spark = spark.createDataFrame(out_pdf, schema=job_features_schema)
-
-            # write incremental batches (append) to avoid huge driver RAM
-            # first batch overwrite/create_version, then append to the same version folder is tricky,
-            # so we write each batch as its own versioned write and keep the latest.
-            # For simplicity: write OVERWRITE each batch into a temp path for the year, then one final union write.
-            tmp_path = out_base + f"/_tmp_driver_batches/yr={yr}/batch={batch_id}"
-            out_spark.write.mode("overwrite").parquet(tmp_path)
-            out_paths.append(tmp_path)
-
-            produced_rows += len(out_pdf)
-            print(f"[NLP-DRIVER] Year {yr} wrote batch {batch_id} -> {tmp_path} (rows so far: {produced_rows:,})")
-
-            buffer.clear()
-            del pdf, out_pdf, out_spark
-            gc.collect()
-
-    # flush remaining
-    if buffer:
-        batch_id += 1
-        pdf = pd.DataFrame(buffer, columns=["date","job_id","soc_2020","full_text"])
-        out_pdf = process_pdf_driver(pdf)
-        out_spark = spark.createDataFrame(out_pdf, schema=job_features_schema)
-
-        tmp_path = out_base + f"/_tmp_driver_batches/yr={yr}/batch={batch_id}"
-        out_spark.write.mode("overwrite").parquet(tmp_path)
-        out_paths.append(tmp_path)
-
-        produced_rows += len(out_pdf)
-        print(f"[NLP-DRIVER] Year {yr} wrote final batch {batch_id} -> {tmp_path} (rows total: {produced_rows:,})")
-
-        buffer.clear()
-        del pdf, out_pdf, out_spark
-        gc.collect()
-
-    print(f"[NLP-DRIVER] Year {yr} merging {len(out_paths)} batch files -> versioned output...")
-
-    merged = None
-    for p in out_paths:
-        part = spark.read.parquet(p)
-        merged = part if merged is None else merged.unionByName(part)
-
-    # final write (versioned) into the official out_base
+    print(f"[NLP] Writing year {yr} to: {out_base}")
     latest_written = safe_write_parquet_s3a(
-        merged,
+        job_feat,
         out_base,
         mode="overwrite",
         create_version=True,
         verify_read=False
     )
+    print(f"[NLP] Year {yr} written to: {latest_written}")
 
-    print(f"[NLP-DRIVER] Year {yr} DONE -> {latest_written}")
+    # Cleanup (driver-side)
+    try:
+        job_feat.unpersist()
+    except Exception:
+        pass
 
-    del merged
+    del df_part
+    del job_feat
     gc.collect()
 
-print("\n[NLP-DRIVER] ALL YEARS COMPLETE.")
+print("\n[NLP] DONE — job feature extraction complete.")
