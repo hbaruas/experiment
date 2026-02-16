@@ -1,99 +1,43 @@
-import shipping_indicators
 import os
 import shutil
-
-# 1. Find where the 'shipping_indicators' package is actually located
-package_path = os.path.dirname(shipping_indicators.__file__)
-print(f"Found package at: {package_path}")
-
-# 2. Define where you want to copy it (your current folder)
-destination_folder = "./shipping_indicators_bundle"
-
-# 3. Copy the entire package folder to your current directory
-if os.path.exists(destination_folder):
-    shutil.rmtree(destination_folder) # Clean start if you run this twice
-
-shutil.copytree(package_path, destination_folder)
-
-print(f"Success! All files from 'shipping_indicators' are now in: {destination_folder}")
-
-
-
-
-
-# Create a zip file of the folder
-shutil.make_archive("shipping_code_ready", 'zip', destination_folder)
-
-print("Download 'shipping_code_ready.zip' from your Jupyter file browser and send it!")
-
-
-
-import shipping_indicators
-import os
-import shutil
-
-# 1. Identify the hidden location of the installed package
-source_path = os.path.dirname(shipping_indicators.__file__)
-
-# 2. Set the destination to your CURRENT notebook directory
-# We name it 'shipping_indicators' so your imports keep working
-local_destination = os.path.join(os.getcwd(), "shipping_indicators")
-
-# 3. Perform the copy
-if os.path.exists(local_destination):
-    print(f"Folder already exists at {local_destination}. Overwriting...")
-    shutil.rmtree(local_destination)
-
-shutil.copytree(source_path, local_destination)
-
-print(f"✅ Done! The code is now at: {local_destination}")
-print("Check your Jupyter file browser; you should see the 'shipping_indicators' folder there now.")
-
-
-
-
-
-
-
-import shutil
-import os
-
-# 1. Path where the code currently exists
-source_folder = "/opt/spark/work-dir/shipping_indicators"
-
-# 2. Path that the Sidebar is actually showing (Current Working Directory)
-target_zip = os.path.join(os.getcwd(), "ALL_SHIPPING_CODE.zip")
-
-# 3. Zip it directly into your visible sidebar area
-try:
-    shutil.make_archive("ALL_SHIPPING_CODE", 'zip', source_folder)
-    print(f"✅ Created: {target_zip}")
-    print("Now, click the REFRESH icon in your sidebar (next to the '+' button).")
-except Exception as e:
-    print(f"❌ Error: {e}")
-
-
 import base64
-from IPython.display import HTML
+import shipping_indicators
+from IPython.display import HTML, display
 
-# Read the zip file we created earlier
-with open("ALL_SHIPPING_CODE.zip", "rb") as f:
+# 1. FIND THE CODE
+# This locates where the 'shipping_indicators' package was installed by pip
+package_path = os.path.dirname(shipping_indicators.__file__)
+zip_name = "shipping_code_for_D_drive"
+zip_file_path = f"{zip_name}.zip"
+
+# 2. BUNDLE THE CODE
+# We create a zip file in your current working directory (/opt/spark/work-dir)
+if os.path.exists(zip_file_path):
+    os.remove(zip_file_path)
+
+shutil.make_archive(zip_name, 'zip', package_path)
+
+# 3. CREATE THE DOWNLOAD BRIDGE
+# We read the file and encode it so it can pass through the browser to your D drive
+with open(zip_file_path, "rb") as f:
     bytes_data = f.read()
 
-# Encode it so the browser can see it as a "downloadable object"
 b64 = base64.b64encode(bytes_data).decode()
-filename = "ALL_SHIPPING_CODE.zip"
 
-# Create a real HTML button
-html = f'''
-<a href="data:application/zip;base64,{b64}" download="{filename}">
-    <button style="padding:10px; background-color:#4CAF50; color:white; cursor:pointer;">
-        Click Here to Download to D Drive
-    </button>
-</a>
+# 4. GENERATE THE BUTTON
+html_button = f'''
+<div style="border: 2px solid #4CAF50; padding: 15px; border-radius: 8px; background-color: #f9f9f9;">
+    <p style="margin-top:0; font-family: sans-serif;"><b>Code Package Ready!</b></p>
+    <a href="data:application/zip;base64,{b64}" download="{zip_file_path}">
+        <button style="padding:12px 24px; background-color:#4CAF50; color:white; 
+                       border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
+            Click to Download to Windows
+        </button>
+    </a>
+    <p style="font-size: 0.8em; color: #666; margin-bottom:0;">
+        After clicking, move the file from <b>Downloads</b> to <b>D:/Shipping_migration/Complete_code</b>
+    </p>
+</div>
 '''
 
-display(HTML(html))
-
-from IPython.display import FileLink
-FileLink("ALL_SHIPPING_CODE.zip")
+display(HTML(html_button))
