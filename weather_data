@@ -48,3 +48,32 @@ shutil.copytree(source_path, local_destination)
 
 print(f"✅ Done! The code is now at: {local_destination}")
 print("Check your Jupyter file browser; you should see the 'shipping_indicators' folder there now.")
+
+
+
+
+
+
+
+import shutil
+import os
+
+# 1. Path where the code currently exists
+source_folder = "/opt/spark/work-dir/shipping_indicators"
+
+# 2. Path that the Sidebar is actually showing (Current Working Directory)
+target_zip = os.path.join(os.getcwd(), "ALL_SHIPPING_CODE.zip")
+
+# 3. Zip it directly into your visible sidebar area
+try:
+    shutil.make_archive("ALL_SHIPPING_CODE", 'zip', source_folder)
+    print(f"✅ Created: {target_zip}")
+    print("Now, click the REFRESH icon in your sidebar (next to the '+' button).")
+except Exception as e:
+    print(f"❌ Error: {e}")
+
+
+
+
+from IPython.display import FileLink
+FileLink("ALL_SHIPPING_CODE.zip")
