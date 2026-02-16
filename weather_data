@@ -25,3 +25,26 @@ print(f"Success! All files from 'shipping_indicators' are now in: {destination_f
 shutil.make_archive("shipping_code_ready", 'zip', destination_folder)
 
 print("Download 'shipping_code_ready.zip' from your Jupyter file browser and send it!")
+
+
+
+import shipping_indicators
+import os
+import shutil
+
+# 1. Identify the hidden location of the installed package
+source_path = os.path.dirname(shipping_indicators.__file__)
+
+# 2. Set the destination to your CURRENT notebook directory
+# We name it 'shipping_indicators' so your imports keep working
+local_destination = os.path.join(os.getcwd(), "shipping_indicators")
+
+# 3. Perform the copy
+if os.path.exists(local_destination):
+    print(f"Folder already exists at {local_destination}. Overwriting...")
+    shutil.rmtree(local_destination)
+
+shutil.copytree(source_path, local_destination)
+
+print(f"✅ Done! The code is now at: {local_destination}")
+print("Check your Jupyter file browser; you should see the 'shipping_indicators' folder there now.")
