@@ -1,43 +1,121 @@
+# ==========================================
+# CELL 1: PHASE 1 - HEAVY NLP EXTRACTION (ARRAY PACKED & SAMPLED)
+# ==========================================
 import os
-import shutil
-import base64
-import shipping_indicators
-from IPython.display import HTML, display
+import gc
+import spacy
+import pandas as pd
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from pyspark.sql.types import *
 
-# 1. FIND THE CODE
-# This locates where the 'shipping_indicators' package was installed by pip
-package_path = os.path.dirname(shipping_indicators.__file__)
-zip_name = "shipping_code_for_D_drive"
-zip_file_path = f"{zip_name}.zip"
+# --- CONFIGURATION ---
+BASE_PATH = "/Users/saurabhkumar/Desktop/OECD_PYSPARK_LOCAL/data/parquet_OECD"
+PARQUET_SOURCE = os.path.join(BASE_PATH, "part-00000-6f2787d8-9f9c-4b9b-9903-fc9d83e3d0c0-c000.snappy.parquet")
+YEARS = [2020, 2021, 2022, 2023, 2024, 2025]
+FORCE_RECOMPUTE_NLP = True 
 
-# 2. BUNDLE THE CODE
-# We create a zip file in your current working directory (/opt/spark/work-dir)
-if os.path.exists(zip_file_path):
-    os.remove(zip_file_path)
+# --- SAMPLING PARAMETER RESTORED ---
+# 1.0 = All 60 Million records. 0.1 = Random 10% sample. 0.01 = Random 1% sample.
+SAMPLE_FRACTION = 1.0  
 
-shutil.make_archive(zip_name, 'zip', package_path)
+def get_nlp_path(year):
+    return os.path.join(BASE_PATH, "processed_data", str(year), "noun_chunks_packed")
 
-# 3. CREATE THE DOWNLOAD BRIDGE
-# We read the file and encode it so it can pass through the browser to your D drive
-with open(zip_file_path, "rb") as f:
-    bytes_data = f.read()
+# --- SPARK SETUP (Optimized for 16GB RAM constraints) ---
+spark = (SparkSession.builder 
+    .appName("OECD_Phase1_NLP_Packed") 
+    .config("spark.executor.memory", "12g") 
+    .config("spark.driver.memory", "4g") 
+    .config("spark.sql.execution.arrow.pyspark.enabled", "true") 
+    .config("spark.sql.execution.arrow.maxRecordsPerBatch", "5000") # Prevents OOM crashes
+    .getOrCreate())
+spark.sparkContext.setLogLevel("ERROR")
+print("✓ Spark Session Created.")
 
-b64 = base64.b64encode(bytes_data).decode()
+# --- NLP UDF (Outputs Arrays) ---
+noun_schema_packed = StructType([
+    StructField("doc_JobID", StringType()),
+    StructField("doc_BGTOcc", StringType()), 
+    StructField("doc_year", IntegerType()),
+    StructField("doc_month", IntegerType()),
+    StructField("noun_chunks", ArrayType(StringType())),
+    StructField("sim_scores", ArrayType(DoubleType()))
+])
 
-# 4. GENERATE THE BUTTON
-html_button = f'''
-<div style="border: 2px solid #4CAF50; padding: 15px; border-radius: 8px; background-color: #f9f9f9;">
-    <p style="margin-top:0; font-family: sans-serif;"><b>Code Package Ready!</b></p>
-    <a href="data:application/zip;base64,{b64}" download="{zip_file_path}">
-        <button style="padding:12px 24px; background-color:#4CAF50; color:white; 
-                       border:none; border-radius:4px; cursor:pointer; font-weight:bold;">
-            Click to Download to Windows
-        </button>
-    </a>
-    <p style="font-size: 0.8em; color: #666; margin-bottom:0;">
-        After clicking, move the file from <b>Downloads</b> to <b>D:/Shipping_migration/Complete_code</b>
-    </p>
-</div>
-'''
+def extract_noun_chunks_packed(iterator):
+    try: nlp = spacy.load("en_core_web_lg", disable=["lemmatizer", "ner"])
+    except: nlp = spacy.load("en_core_web_sm")
+    target = nlp("data")
 
-display(HTML(html_button))
+    for pdf in iterator:
+        rows = []
+        texts = pdf["full_text"].fillna("").astype(str).tolist()
+
+        # Meta: JobID, SOC, Year, Month
+        meta = list(zip(
+            pdf["job_id"].astype(str), 
+            pdf["soc_2020"].astype(str),
+            pdf["doc_year"],
+            pdf["doc_month"]
+        ))
+
+        for i, doc in enumerate(nlp.pipe(texts, batch_size=50)):
+            chunks_list = []
+            sims_list = []
+
+            for chunk in doc.noun_chunks:
+                if chunk.has_vector:
+                    cleaned = "".join(c for c in chunk.text if not c.isdigit()).strip()
+                    if cleaned:
+                        chunks_list.append(cleaned.lower())
+                        sims_list.append(float(chunk.similarity(target)))
+
+            rows.append({
+                'doc_JobID': meta[i][0], 
+                'doc_BGTOcc': meta[i][1],
+                'doc_year': meta[i][2],
+                'doc_month': meta[i][3],
+                'noun_chunks': chunks_list, 
+                'sim_scores': sims_list
+            })
+        yield pd.DataFrame(rows) if rows else pd.DataFrame(columns=noun_schema_packed.fieldNames())
+
+# --- EXECUTION ---
+for year in YEARS:
+    out_path = get_nlp_path(year)
+    if not FORCE_RECOMPUTE_NLP:
+        try:
+            if spark.read.parquet(out_path).limit(1).count() > 0:
+                print(f"[SKIP] Data already extracted for {year}.")
+                continue
+        except: pass
+
+    try:
+        print(f"\n--- EXTRACTING TEXT FOR {year} ---")
+        df_raw = spark.read.parquet(PARQUET_SOURCE) \
+            .withColumn("date", F.to_date("date")) \
+            .filter(F.year("date") == year) \
+            .withColumn("doc_year", F.year("date")) \
+            .withColumn("doc_month", F.month("date"))
+
+        # --- SAMPLING LOGIC & LOGGING APPLIED ---
+        if SAMPLE_FRACTION < 1.0:
+            df_raw = df_raw.sample(False, SAMPLE_FRACTION, seed=42)
+            
+        advert_count = df_raw.count()
+        print(f"  -> Processing {advert_count} job adverts (Sample Fraction: {SAMPLE_FRACTION})")
+
+        if advert_count == 0: 
+            print(f"  -> Skipping {year}: No records found after sampling.")
+            continue
+
+        df_raw = df_raw.repartition(max(8, int(advert_count/10000)))
+        chunks = df_raw.mapInPandas(extract_noun_chunks_packed, schema=noun_schema_packed)
+
+        # Partition by month to save progress in smaller, safer chunks
+        chunks.write.mode("overwrite").partitionBy("doc_month").parquet(out_path)
+        print(f"  [DONE] Extracted NLP features for {year}.")
+        
+    except Exception as e:
+        print(f"  [ERROR] Skipping {year} NLP extraction due to error: {e}")
