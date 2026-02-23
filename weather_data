@@ -1,33 +1,37 @@
 # ==========================================
-# CELL 6a: SETUP & DICTIONARY WORD CLOUD
+# CELL 5: PHASE 5 - ECONOMIC VALUATION (FIXED SECTOR TOTAL)
 # ==========================================
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-import matplotlib.pyplot as plt
-from wordcloud import WordCloud
+print("--- Phase 5: Calculating Economic Valuation ---")
 
-print("--- Phase 6: Generating Visualizations ---")
+if not sector_summaries: raise ValueError("No sector data generated. Check Cell 3 output.")
+full_sector_df = sector_summaries[0]
+for d in sector_summaries[1:]: full_sector_df = full_sector_df.unionByName(d)
 
-if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
-    vocab_pdf = oecd_vocabulary.toPandas()
-    if not vocab_pdf.empty:
-        print("\nGenerating Dictionary Word Cloud...")
-        
-        # THE FIX: Strip out any hidden newline or return characters that crash the image library
-        vocab_pdf['noun_chunk'] = vocab_pdf['noun_chunk'].astype(str).str.replace(r'\n|\r', ' ', regex=True)
-        
-        # Dictionary linking words to their Relative Share importance
-        word_freq = dict(zip(vocab_pdf['noun_chunk'], vocab_pdf['relative_share']))
-        
-        wc = WordCloud(width=1200, height=500, background_color='white', colormap='viridis', max_words=100)
-        wc.generate_from_frequencies(word_freq)
-        
-        plt.figure(figsize=(16, 8))
-        plt.imshow(wc, interpolation='bilinear')
-        plt.axis('off')
-        plt.title("OECD Data Dictionary (Sized by Specificity to Data-Work)", fontsize=22, pad=20)
-        plt.tight_layout()
-        plt.show()
-    else:
-        print("Dictionary is empty. Cannot generate Word Cloud.")
+sut_df = spark.read.option("header", True).csv(SUT_CSV).filter(F.col("year") == SUT_YEAR) \
+    .select(
+        F.upper(F.trim("SIC_Code")).alias("SIC_Code"), 
+        (F.col("GVA_basic_prices").cast("double") * 1000000).alias("GVA_basic_prices"), 
+        (F.col("COMP_EMP").cast("double") * 1000000).alias("COMP_EMP")
+    )
+
+alpha_expr = F.create_map([F.lit(x) for i in ALPHA_MAP.items() for x in i])
+valued = full_sector_df.withColumn("SIC_Code", F.upper(F.trim("SIC_Code"))) \
+    .join(sut_df, "SIC_Code", "inner") \
+    .withColumn("alpha_low", F.lit(ALPHA_LOW)) \
+    .withColumn("alpha_sector", F.coalesce(alpha_expr[F.col("SIC_Code")], F.lit(ALPHA_ECONOMY_AVG)))
+
+valued = valued \
+    .withColumn("inv_entry", F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("data_entry_share")/100)) \
+    .withColumn("inv_db",    F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("database_share")/100)) \
+    .withColumn("inv_ana",   F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("data_analytics_share")/100)) \
+    .withColumn("inv_low_tot", F.col("alpha_low") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
+
+# THE FIX: Calculate the sector investment using the TOTAL data workforce, not just the anchors
+valued = valued.withColumn("total_investment_sector", F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
+
+valued = valued \
+    .withColumn("inv_share_gva_sector", F.when(F.col("GVA_basic_prices")>0, (F.col("total_investment_sector")/F.col("GVA_basic_prices"))*100).otherwise(0.0)) \
+    .withColumn("inv_share_gva_low", F.when(F.col("GVA_basic_prices")>0, (F.col("inv_low_tot")/F.col("GVA_basic_prices"))*100).otherwise(0.0))
+
+valued.cache()
+print("✓ Valuation Complete.")
