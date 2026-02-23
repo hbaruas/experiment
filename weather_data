@@ -1,201 +1,33 @@
 # ==========================================
-# CELL 1: PHASE 1 - HEAVY NLP EXTRACTION (ARRAY PACKED & SAMPLED)
+# CELL 6a: SETUP & DICTIONARY WORD CLOUD
 # ==========================================
-import os
-import gc
-import spacy
 import pandas as pd
-import logging
-from typing import Optional, Literal, Dict
-from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
-from pyspark.sql.types import *
+import plotly.express as px
+import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud
 
-# --- LOGGER SETUP ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+print("--- Phase 6: Generating Visualizations ---")
 
-# --- CONFIGURATION ---
-BASE_PATH = "/Users/saurabhkumar/Desktop/OECD_PYSPARK_LOCAL/data/parquet_OECD"
-PARQUET_SOURCE = os.path.join(BASE_PATH, "part-00000-6f2787d8-9f9c-4b9b-9903-fc9d83e3d0c0-c000.snappy.parquet")
-YEARS = [2020, 2021, 2022, 2023, 2024, 2025]
-FORCE_RECOMPUTE_NLP = True 
-
-# 1.0 = All 60 Million records. 0.1 = Random 10% sample. 0.01 = Random 1% sample.
-SAMPLE_FRACTION = 1.0  
-
-def get_nlp_path(year):
-    return os.path.join(BASE_PATH, "processed_data", str(year), "noun_chunks_packed")
-
-# --- RDSA SPARK SESSION BUILDER ---
-def create_spark_session(
-    app_name: Optional[str] = None,
-    size: Optional[Literal["small", "medium", "large", "extra-large"]] = None,
-    extra_configs: Optional[Dict[str, str]] = None,
-) -> SparkSession:
-    try:
-        if size:
-            size = size.lower()
-            valid_sizes = ["small", "medium", "large", "extra-large"]
-            if size not in valid_sizes:
-                msg = f"Invalid '{size=}'. If specified must be one of {valid_sizes}."
-                raise ValueError(msg)
-
-        logger.info(
-            (f"Creating a '{size}' Spark session..." if size else "Creating a basic Spark session...")
-        )
-
-        if app_name:
-            builder = SparkSession.builder.appName(f"{app_name}")
-        else:
-            builder = SparkSession.builder
-
-        # fmt: off
-        if size == "small":
-            builder = (
-                builder.config("spark.executor.memory", "1g")
-                .config("spark.executor.cores", 1)
-                .config("spark.dynamicAllocation.maxExecutors", 3)
-                .config("spark.sql.shuffle.partitions", 12)
-            )
-        elif size == "medium":
-            builder = (
-                builder.config("spark.executor.memory", "6g")
-                .config("spark.executor.cores", 3)
-                .config("spark.dynamicAllocation.maxExecutors", 3)
-                .config("spark.sql.shuffle.partitions", 18)
-            )
-        elif size == "large":
-            builder = (
-                builder.config("spark.executor.memory", "10g")
-                .config("spark.yarn.executor.memoryOverhead", "1g")
-                .config("spark.executor.cores", 5)
-                .config("spark.dynamicAllocation.maxExecutors", 5)
-                .config("spark.sql.shuffle.partitions", 200)
-            )
-        elif size == "extra-large":
-            builder = (
-                builder.config("spark.executor.memory", "20g")
-                .config("spark.yarn.executor.memoryOverhead", "2g")
-                .config("spark.executor.cores", 5)
-                .config("spark.dynamicAllocation.maxExecutors", 12)
-                .config("spark.sql.shuffle.partitions", 240)
-            )
-
-        # Common configurations for all sizes
-        builder = (
-            builder.config("spark.dynamicAllocation.enabled", "true")
-             .config("spark.dynamicAllocation.shuffleTracking.enabled", "true")
-             .config("spark.sql.adaptive.enabled", "true")
-             .config("spark.ui.showConsoleProgress", "false")
-        ).enableHiveSupport()
-        # fmt: on
-
-        # Apply extra configurations
-        if extra_configs:
-            for key, value in extra_configs.items():
-                builder = builder.config(key, value)
-
-        logger.info("Spark session created successfully!")
-        return builder.getOrCreate()
-    except Exception as e:
-        logger.error(f"An error occurred while creating the Spark session: {e}")
-        raise
-
-# --- INITIALIZE EXTRA-LARGE CLUSTER ---
-spark = create_spark_session(
-    app_name="OECD_Phase1_NLP_Packed",
-    size="extra-large", 
-    extra_configs={
-        "spark.sql.execution.arrow.pyspark.enabled": "true",
-        "spark.sql.execution.arrow.maxRecordsPerBatch": "5000" # Our vital memory safeguard
-    }
-)
-spark.sparkContext.setLogLevel("ERROR")
-
-# --- NLP UDF (Outputs Arrays) ---
-noun_schema_packed = StructType([
-    StructField("doc_JobID", StringType()),
-    StructField("doc_BGTOcc", StringType()), 
-    StructField("doc_year", IntegerType()),
-    StructField("doc_month", IntegerType()),
-    StructField("noun_chunks", ArrayType(StringType())),
-    StructField("sim_scores", ArrayType(DoubleType()))
-])
-
-def extract_noun_chunks_packed(iterator):
-    try: nlp = spacy.load("en_core_web_lg", disable=["lemmatizer", "ner"])
-    except: nlp = spacy.load("en_core_web_sm")
-    target = nlp("data")
-
-    for pdf in iterator:
-        rows = []
-        texts = pdf["full_text"].fillna("").astype(str).tolist()
-
-        meta = list(zip(
-            pdf["job_id"].astype(str), 
-            pdf["soc_2020"].astype(str),
-            pdf["doc_year"],
-            pdf["doc_month"]
-        ))
-
-        for i, doc in enumerate(nlp.pipe(texts, batch_size=50)):
-            chunks_list = []
-            sims_list = []
-
-            for chunk in doc.noun_chunks:
-                if chunk.has_vector:
-                    cleaned = "".join(c for c in chunk.text if not c.isdigit()).strip()
-                    if cleaned:
-                        chunks_list.append(cleaned.lower())
-                        sims_list.append(float(chunk.similarity(target)))
-
-            rows.append({
-                'doc_JobID': meta[i][0], 
-                'doc_BGTOcc': meta[i][1],
-                'doc_year': meta[i][2],
-                'doc_month': meta[i][3],
-                'noun_chunks': chunks_list, 
-                'sim_scores': sims_list
-            })
-        yield pd.DataFrame(rows) if rows else pd.DataFrame(columns=noun_schema_packed.fieldNames())
-
-# --- EXECUTION ---
-for year in YEARS:
-    out_path = get_nlp_path(year)
-    if not FORCE_RECOMPUTE_NLP:
-        try:
-            if spark.read.parquet(out_path).limit(1).count() > 0:
-                print(f"[SKIP] Data already extracted for {year}.")
-                continue
-        except: pass
-
-    try:
-        print(f"\n--- EXTRACTING TEXT FOR {year} ---")
-        df_raw = spark.read.parquet(PARQUET_SOURCE) \
-            .withColumn("date", F.to_date("date")) \
-            .filter(F.year("date") == year) \
-            .withColumn("doc_year", F.year("date")) \
-            .withColumn("doc_month", F.month("date"))
-
-        # --- SAMPLING LOGIC & LOGGING APPLIED ---
-        if SAMPLE_FRACTION < 1.0:
-            df_raw = df_raw.sample(False, SAMPLE_FRACTION, seed=42)
-            
-        advert_count = df_raw.count()
-        print(f"  -> Processing {advert_count} job adverts (Sample Fraction: {SAMPLE_FRACTION})")
-
-        if advert_count == 0: 
-            print(f"  -> Skipping {year}: No records found after sampling.")
-            continue
-
-        # Adjust partitions to take full advantage of the 240 partition limit of 'extra-large'
-        df_raw = df_raw.repartition(max(240, int(advert_count/10000)))
+if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
+    vocab_pdf = oecd_vocabulary.toPandas()
+    if not vocab_pdf.empty:
+        print("\nGenerating Dictionary Word Cloud...")
         
-        chunks = df_raw.mapInPandas(extract_noun_chunks_packed, schema=noun_schema_packed)
-
-        chunks.write.mode("overwrite").partitionBy("doc_month").parquet(out_path)
-        print(f"  [DONE] Extracted NLP features for {year}.")
+        # THE FIX: Strip out any hidden newline or return characters that crash the image library
+        vocab_pdf['noun_chunk'] = vocab_pdf['noun_chunk'].astype(str).str.replace(r'\n|\r', ' ', regex=True)
         
-    except Exception as e:
-        print(f"  [ERROR] Skipping {year} NLP extraction due to error: {e}")
+        # Dictionary linking words to their Relative Share importance
+        word_freq = dict(zip(vocab_pdf['noun_chunk'], vocab_pdf['relative_share']))
+        
+        wc = WordCloud(width=1200, height=500, background_color='white', colormap='viridis', max_words=100)
+        wc.generate_from_frequencies(word_freq)
+        
+        plt.figure(figsize=(16, 8))
+        plt.imshow(wc, interpolation='bilinear')
+        plt.axis('off')
+        plt.title("OECD Data Dictionary (Sized by Specificity to Data-Work)", fontsize=22, pad=20)
+        plt.tight_layout()
+        plt.show()
+    else:
+        print("Dictionary is empty. Cannot generate Word Cloud.")
