@@ -1,37 +1,14 @@
-# ==========================================
-# CELL 5: PHASE 5 - ECONOMIC VALUATION (FIXED SECTOR TOTAL)
-# ==========================================
-print("--- Phase 5: Calculating Economic Valuation ---")
+# THE FIX: Apply the strict volume threshold to the OFFICIAL dictionary
+MIN_GLOBAL_JOBS = 500
 
-if not sector_summaries: raise ValueError("No sector data generated. Check Cell 3 output.")
-full_sector_df = sector_summaries[0]
-for d in sector_summaries[1:]: full_sector_df = full_sector_df.unionByName(d)
+oecd_vocabulary = dictionary_df.filter(
+    (F.col("relative_share") >= 10.0) & 
+    (F.col("global_count") >= MIN_GLOBAL_JOBS)
+)
 
-sut_df = spark.read.option("header", True).csv(SUT_CSV).filter(F.col("year") == SUT_YEAR) \
-    .select(
-        F.upper(F.trim("SIC_Code")).alias("SIC_Code"), 
-        (F.col("GVA_basic_prices").cast("double") * 1000000).alias("GVA_basic_prices"), 
-        (F.col("COMP_EMP").cast("double") * 1000000).alias("COMP_EMP")
-    )
+# Optional: Print the top 30 true skills to the console to verify it worked
+print(f"=== TRUE TOP 30 OECD DICTIONARY TERMS (By Volume) ===")
+oecd_vocabulary.orderBy(F.col("global_count").desc()).limit(30).show(truncate=False)
 
-alpha_expr = F.create_map([F.lit(x) for i in ALPHA_MAP.items() for x in i])
-valued = full_sector_df.withColumn("SIC_Code", F.upper(F.trim("SIC_Code"))) \
-    .join(sut_df, "SIC_Code", "inner") \
-    .withColumn("alpha_low", F.lit(ALPHA_LOW)) \
-    .withColumn("alpha_sector", F.coalesce(alpha_expr[F.col("SIC_Code")], F.lit(ALPHA_ECONOMY_AVG)))
-
-valued = valued \
-    .withColumn("inv_entry", F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("data_entry_share")/100)) \
-    .withColumn("inv_db",    F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("database_share")/100)) \
-    .withColumn("inv_ana",   F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("data_analytics_share")/100)) \
-    .withColumn("inv_low_tot", F.col("alpha_low") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
-
-# THE FIX: Calculate the sector investment using the TOTAL data workforce, not just the anchors
-valued = valued.withColumn("total_investment_sector", F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
-
-valued = valued \
-    .withColumn("inv_share_gva_sector", F.when(F.col("GVA_basic_prices")>0, (F.col("total_investment_sector")/F.col("GVA_basic_prices"))*100).otherwise(0.0)) \
-    .withColumn("inv_share_gva_low", F.when(F.col("GVA_basic_prices")>0, (F.col("inv_low_tot")/F.col("GVA_basic_prices"))*100).otherwise(0.0))
-
-valued.cache()
-print("✓ Valuation Complete.")
+# (Leave your saving code exactly as it is below this)
+# e.g., oecd_vocabulary.write.mode("overwrite").parquet(...)
