@@ -1,14 +1,67 @@
-# THE FIX: Apply the strict volume threshold to the OFFICIAL dictionary
-MIN_GLOBAL_JOBS = 500
+# ==========================================
+# CELL 2.5: ENSEMBLE NLP POST-PROCESSING POLISH
+# ==========================================
+import spacy
+import pyspark.sql.functions as F
+from pyspark.sql.types import FloatType
 
-oecd_vocabulary = dictionary_df.filter(
-    (F.col("relative_share") >= 10.0) & 
-    (F.col("global_count") >= MIN_GLOBAL_JOBS)
-)
+print("--- Phase 2.5: Executing Ensemble NLP Polish ---")
 
-# Optional: Print the top 30 true skills to the console to verify it worked
-print(f"=== TRUE TOP 30 OECD DICTIONARY TERMS (By Volume) ===")
-oecd_vocabulary.orderBy(F.col("global_count").desc()).limit(30).show(truncate=False)
+# 1. Define the Gold Standard Tech & Data Array
+GOLD_STANDARD = [
+    "data", "database", "analytics", "statistics", "software", "algorithm",
+    "sql", "python", "spreadsheet", "dashboard", "cloud", "server",
+    "etl", "visualization", "reporting", "infrastructure", "automation", 
+    "modeling", "machine learning", "artificial intelligence"
+]
 
-# (Leave your saving code exactly as it is below this)
-# e.g., oecd_vocabulary.write.mode("overwrite").parquet(...)
+# 2. Define the PySpark UDF (User Defined Function) for multi-target similarity
+# Note: We load spaCy inside the UDF to ensure it runs safely across all Spark worker nodes
+@F.udf(returnType=FloatType())
+def max_gold_similarity(phrase):
+    if not phrase: return 0.0
+    
+    # Lazy load the spaCy model on the worker node
+    import spacy
+    if 'nlp_worker' not in globals():
+        global nlp_worker
+        nlp_worker = spacy.load("en_core_web_md") # Ensure this matches the model you used in Phase 1
+        
+    phrase_doc = nlp_worker(str(phrase))
+    
+    # Calculate similarity against EVERY gold standard term and return the highest score
+    max_score = 0.0
+    for gold_term in GOLD_STANDARD:
+        gold_doc = nlp_worker(gold_term)
+        sim = phrase_doc.similarity(gold_doc)
+        if sim > max_score:
+            max_score = sim
+            
+    return float(max_score)
+
+# 3. Apply the AI exam to the dictionary
+if 'oecd_vocabulary' in globals():
+    print(f"Original Dictionary Size: {oecd_vocabulary.count()} terms")
+    
+    # Run the UDF across the cluster
+    polished_df = oecd_vocabulary.withColumn(
+        "gold_sim_score", 
+        max_gold_similarity(F.col("noun_chunk"))
+    )
+    
+    # 4. The Final Filter: Must score >= 0.45 against at least one Gold Standard term
+    FINAL_SIM_THRESHOLD = 0.45
+    
+    polished_vocabulary = polished_df.filter(F.col("gold_sim_score") >= FINAL_SIM_THRESHOLD)
+    
+    print(f"Polished Dictionary Size: {polished_vocabulary.count()} terms")
+    
+    print("\n=== TOP 30 SURVIVORS (By Volume) ===")
+    polished_vocabulary.orderBy(F.col("global_count").desc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
+    
+    print("\n=== BOTTOM 30 SURVIVORS (Audit) ===")
+    polished_vocabulary.orderBy(F.col("global_count").asc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
+    
+    # OVERWRITE the old dictionary with this newly polished one
+    # polished_vocabulary.write.mode("overwrite").parquet(DICTIONARY_PATH)
+    # (Uncomment the save line above to lock it in once you review the printed output)
