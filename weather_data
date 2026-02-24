@@ -1,67 +1,60 @@
 # ==========================================
-# CELL 2.5: ENSEMBLE NLP POST-PROCESSING POLISH
+# CELL 2.5: ENSEMBLE NLP POST-PROCESSING POLISH (DRIVER-SIDE BYPASS)
 # ==========================================
+import pandas as pd
 import spacy
 import pyspark.sql.functions as F
-from pyspark.sql.types import FloatType
 
-print("--- Phase 2.5: Executing Ensemble NLP Polish ---")
+print("--- Phase 2.5: Executing Ensemble NLP Polish (Driver-Side) ---")
 
-# 1. Define the Gold Standard Tech & Data Array
-GOLD_STANDARD = [
-    "data", "database", "analytics", "statistics", "software", "algorithm",
-    "sql", "python", "spreadsheet", "dashboard", "cloud", "server",
-    "etl", "visualization", "reporting", "infrastructure", "automation", 
-    "modeling", "machine learning", "artificial intelligence"
-]
+if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
+    print(f"Pre-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
+    
+    # 1. Pull the tiny 10k dictionary to the Driver Node
+    pdf = oecd_vocabulary.toPandas()
+    
+    # 2. Load the AI model exactly ONCE in the main memory
+    print("Loading spaCy model...")
+    try: nlp_driver = spacy.load("en_core_web_md") 
+    except: nlp_driver = spacy.load("en_core_web_sm")
+    
+    GOLD_STANDARD = [
+        "data", "database", "analytics", "statistics", "software", "algorithm",
+        "sql", "python", "spreadsheet", "dashboard", "cloud", "server",
+        "etl", "visualization", "reporting", "infrastructure", "automation", 
+        "modeling", "machine learning", "artificial intelligence"
+    ]
+    
+    # Pre-compute Gold Standard vectors
+    gold_docs = [nlp_driver(g) for g in GOLD_STANDARD]
+    
+    # 3. Calculate max similarity for each word using standard Python
+    print("Calculating similarities... (This takes about 5 seconds)")
+    def get_max_sim(phrase):
+        if not phrase: return 0.0
+        phrase_doc = nlp_driver(str(phrase))
+        return float(max([phrase_doc.similarity(g) for g in gold_docs])) if gold_docs else 0.0
 
-# 2. Define the PySpark UDF (User Defined Function) for multi-target similarity
-# Note: We load spaCy inside the UDF to ensure it runs safely across all Spark worker nodes
-@F.udf(returnType=FloatType())
-def max_gold_similarity(phrase):
-    if not phrase: return 0.0
+    pdf['gold_sim_score'] = pdf['noun_chunk'].apply(get_max_sim)
     
-    # Lazy load the spaCy model on the worker node
-    import spacy
-    if 'nlp_worker' not in globals():
-        global nlp_worker
-        nlp_worker = spacy.load("en_core_web_md") # Ensure this matches the model you used in Phase 1
-        
-    phrase_doc = nlp_worker(str(phrase))
+    # 4. Apply the Polish Filter (Must score >= 0.45)
+    FINAL_SIM_THRESHOLD = 0.45 
+    polished_pdf = pdf[pdf['gold_sim_score'] >= FINAL_SIM_THRESHOLD]
     
-    # Calculate similarity against EVERY gold standard term and return the highest score
-    max_score = 0.0
-    for gold_term in GOLD_STANDARD:
-        gold_doc = nlp_worker(gold_term)
-        sim = phrase_doc.similarity(gold_doc)
-        if sim > max_score:
-            max_score = sim
-            
-    return float(max_score)
-
-# 3. Apply the AI exam to the dictionary
-if 'oecd_vocabulary' in globals():
-    print(f"Original Dictionary Size: {oecd_vocabulary.count()} terms")
+    # 5. Push the clean data back to the Spark Cluster
+    # We specify the schema to ensure a perfectly clean handoff back to PySpark
+    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
+    schema = StructType([
+        StructField("noun_chunk", StringType(), True),
+        StructField("relative_share", DoubleType(), True),
+        StructField("avg_sim", DoubleType(), True),
+        StructField("global_count", LongType(), True),
+        StructField("gold_sim_score", DoubleType(), True)
+    ])
     
-    # Run the UDF across the cluster
-    polished_df = oecd_vocabulary.withColumn(
-        "gold_sim_score", 
-        max_gold_similarity(F.col("noun_chunk"))
-    )
+    oecd_vocabulary = spark.createDataFrame(polished_pdf, schema=schema).cache()
     
-    # 4. The Final Filter: Must score >= 0.45 against at least one Gold Standard term
-    FINAL_SIM_THRESHOLD = 0.45
-    
-    polished_vocabulary = polished_df.filter(F.col("gold_sim_score") >= FINAL_SIM_THRESHOLD)
-    
-    print(f"Polished Dictionary Size: {polished_vocabulary.count()} terms")
+    print(f"Post-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
     
     print("\n=== TOP 30 SURVIVORS (By Volume) ===")
-    polished_vocabulary.orderBy(F.col("global_count").desc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
-    
-    print("\n=== BOTTOM 30 SURVIVORS (Audit) ===")
-    polished_vocabulary.orderBy(F.col("global_count").asc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
-    
-    # OVERWRITE the old dictionary with this newly polished one
-    # polished_vocabulary.write.mode("overwrite").parquet(DICTIONARY_PATH)
-    # (Uncomment the save line above to lock it in once you review the printed output)
+    oecd_vocabulary.orderBy(F.col("global_count").desc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
