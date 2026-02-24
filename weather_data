@@ -1,60 +1,16 @@
-# ==========================================
-# CELL 2.5: ENSEMBLE NLP POST-PROCESSING POLISH (DRIVER-SIDE BYPASS)
-# ==========================================
-import pandas as pd
-import spacy
-import pyspark.sql.functions as F
+Dear Matt,
 
-print("--- Phase 2.5: Executing Ensemble NLP Polish (Driver-Side) ---")
+I hope you’re having a good start to the week.
 
-if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
-    print(f"Pre-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
-    
-    # 1. Pull the tiny 10k dictionary to the Driver Node
-    pdf = oecd_vocabulary.toPandas()
-    
-    # 2. Load the AI model exactly ONCE in the main memory
-    print("Loading spaCy model...")
-    try: nlp_driver = spacy.load("en_core_web_md") 
-    except: nlp_driver = spacy.load("en_core_web_sm")
-    
-    GOLD_STANDARD = [
-        "data", "database", "analytics", "statistics", "software", "algorithm",
-        "sql", "python", "spreadsheet", "dashboard", "cloud", "server",
-        "etl", "visualization", "reporting", "infrastructure", "automation", 
-        "modeling", "machine learning", "artificial intelligence"
-    ]
-    
-    # Pre-compute Gold Standard vectors
-    gold_docs = [nlp_driver(g) for g in GOLD_STANDARD]
-    
-    # 3. Calculate max similarity for each word using standard Python
-    print("Calculating similarities... (This takes about 5 seconds)")
-    def get_max_sim(phrase):
-        if not phrase: return 0.0
-        phrase_doc = nlp_driver(str(phrase))
-        return float(max([phrase_doc.similarity(g) for g in gold_docs])) if gold_docs else 0.0
+I have my Norway visa appointment this Thursday morning and, unfortunately, Oracle Fusion is currently down, so I cannot download my formal leave approval record.
 
-    pdf['gold_sim_score'] = pdf['noun_chunk'].apply(get_max_sim)
-    
-    # 4. Apply the Polish Filter (Must score >= 0.45)
-    FINAL_SIM_THRESHOLD = 0.45 
-    polished_pdf = pdf[pdf['gold_sim_score'] >= FINAL_SIM_THRESHOLD]
-    
-    # 5. Push the clean data back to the Spark Cluster
-    # We specify the schema to ensure a perfectly clean handoff back to PySpark
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
-    schema = StructType([
-        StructField("noun_chunk", StringType(), True),
-        StructField("relative_share", DoubleType(), True),
-        StructField("avg_sim", DoubleType(), True),
-        StructField("global_count", LongType(), True),
-        StructField("gold_sim_score", DoubleType(), True)
-    ])
-    
-    oecd_vocabulary = spark.createDataFrame(polished_pdf, schema=schema).cache()
-    
-    print(f"Post-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
-    
-    print("\n=== TOP 30 SURVIVORS (By Volume) ===")
-    oecd_vocabulary.orderBy(F.col("global_count").desc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
+To satisfy the embassy's "Proof of Leave" requirement, could you please reply to this email confirming that my leave has been approved? For the visa officer's records, the reply needs to explicitly state the dates.
+
+Could you please reply with something like:
+"I confirm that Saurabh Kumar’s leave request for his holiday from [Insert Start Date] to [Insert End Date] has been fully approved, and he is expected back at work on [Insert Return Date]."
+
+I am sorry for the short notice on this, but having this email confirmation is a mandatory requirement for my appointment on Thursday.
+
+Thank you for your help,
+
+Saurabh Kumar
