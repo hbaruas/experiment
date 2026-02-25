@@ -1,68 +1,206 @@
 # ==========================================
-# CELL 2.5: ENSEMBLE NLP POST-PROCESSING POLISH (DRIVER-SIDE BYPASS)
+# CELL 5: PHASE 5 - ECONOMIC VALUATION (3 SCENARIOS)
 # ==========================================
-import pandas as pd
-import spacy
-import pyspark.sql.functions as F
+print("--- Phase 5: Calculating Economic Valuation ---")
 
-print("--- Phase 2.5: Executing Ensemble NLP Polish (Driver-Side) ---")
+if not sector_summaries: raise ValueError("No sector data generated. Check Cell 3 output.")
+full_sector_df = sector_summaries[0]
+for d in sector_summaries[1:]: full_sector_df = full_sector_df.unionByName(d)
 
-if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
-    print(f"Pre-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
-    
-    # 1. Pull the tiny 10k dictionary to the Driver Node
-    pdf = oecd_vocabulary.toPandas()
-    
-    # 2. Load the AI model exactly ONCE in the main memory
-    print("Loading spaCy model...")
-    try: nlp_driver = spacy.load("en_core_web_md") 
-    except: nlp_driver = spacy.load("en_core_web_sm")
-    
-    GOLD_STANDARD = [
-        "data", "database", "analytics", "statistics", "software", "algorithm",
-        "sql", "python", "spreadsheet", "dashboard", "cloud", "server",
-        "etl", "visualization", "reporting", "infrastructure", "automation", 
-        "modeling", "machine learning", "artificial intelligence"
-    ]
-    
-    # Pre-compute Gold Standard vectors
-    gold_docs = [nlp_driver(g) for g in GOLD_STANDARD]
-    
-    # 3. Calculate max similarity for each word using standard Python
-    print("Calculating similarities... (This takes about 5 seconds)")
-    def get_max_sim(phrase):
-        if not phrase: return 0.0
-        phrase_doc = nlp_driver(str(phrase))
-        return float(max([phrase_doc.similarity(g) for g in gold_docs])) if gold_docs else 0.0
+sut_df = spark.read.option("header", True).csv(SUT_CSV).filter(F.col("year") == SUT_YEAR) \
+    .select(
+        F.upper(F.trim("SIC_Code")).alias("SIC_Code"), 
+        (F.col("GVA_basic_prices").cast("double") * 1000000).alias("GVA_basic_prices"), 
+        (F.col("COMP_EMP").cast("double") * 1000000).alias("COMP_EMP")
+    )
 
-    pdf['gold_sim_score'] = pdf['noun_chunk'].apply(get_max_sim)
+alpha_expr = F.create_map([F.lit(x) for i in ALPHA_MAP.items() for x in i])
+valued = full_sector_df.withColumn("SIC_Code", F.upper(F.trim("SIC_Code"))) \
+    .join(sut_df, "SIC_Code", "inner") \
+    .withColumn("alpha_low", F.lit(ALPHA_LOW)) \
+    .withColumn("alpha_avg", F.lit(ALPHA_ECONOMY_AVG)) \
+    .withColumn("alpha_sector", F.coalesce(alpha_expr[F.col("SIC_Code")], F.lit(ALPHA_ECONOMY_AVG)))
+
+# SCENARIO 1: Sector Alpha Map
+valued = valued.withColumn("total_investment_sector", F.col("alpha_sector") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
+# SCENARIO 2: Economy Average (3.62)
+valued = valued.withColumn("inv_avg_tot", F.col("alpha_avg") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
+# SCENARIO 3: Conservative (1.58)
+valued = valued.withColumn("inv_low_tot", F.col("alpha_low") * F.col("COMP_EMP") * (F.col("total_data_share")/100))
+
+# INTENSITY PERCENTAGES
+valued = valued \
+    .withColumn("inv_share_gva_sector", F.when(F.col("GVA_basic_prices")>0, (F.col("total_investment_sector")/F.col("GVA_basic_prices"))*100).otherwise(0.0)) \
+    .withColumn("inv_share_gva_avg", F.when(F.col("GVA_basic_prices")>0, (F.col("inv_avg_tot")/F.col("GVA_basic_prices"))*100).otherwise(0.0)) \
+    .withColumn("inv_share_gva_low", F.when(F.col("GVA_basic_prices")>0, (F.col("inv_low_tot")/F.col("GVA_basic_prices"))*100).otherwise(0.0))
+
+valued.cache()
+print("✓ Valuation Complete.")
+
+
+
+
+
+
+
+
+# ==========================================
+# CELL 6b: TOTAL UK GVA vs. DATA INVESTMENT (LINE CHART)
+# ==========================================
+from plotly.subplots import make_subplots
+
+pdf = valued.toPandas()
+
+if pdf.empty:
+    print("WARNING: Valuation DataFrame is empty. Cannot plot economic charts.")
+else:
+    pdf['year_str'] = pdf['year'].astype(str)
+    econ = pdf.groupby("year_str")[["inv_low_tot", "inv_avg_tot", "total_investment_sector", "GVA_basic_prices"]].sum().reset_index()
+
+    # Create figure with secondary y-axis
+    fig_macro_abs = make_subplots(specs=[[{"secondary_y": True}]])
+
+    def fmt_b(vals): return [f"£{v/1e9:.1f}B" for v in vals]
+    def fmt_t(vals): return [f"£{v/1e12:.2f}T" for v in vals]
+
+    # 1. Sector Alpha Map Investment (Dark Blue)
+    fig_macro_abs.add_trace(go.Scatter(
+        x=econ['year_str'], y=econ['total_investment_sector'], name='Sector Map (Upper Bound)',
+        mode='lines+markers+text', text=fmt_b(econ['total_investment_sector']), textposition="top center",
+        line=dict(color='#00008b', width=4), marker=dict(size=10)
+    ), secondary_y=False)
+
+    # 2. Economy Average Investment (Green)
+    fig_macro_abs.add_trace(go.Scatter(
+        x=econ['year_str'], y=econ['inv_avg_tot'], name=f'Economy Average (α={ALPHA_ECONOMY_AVG})',
+        mode='lines+markers+text', text=fmt_b(econ['inv_avg_tot']), textposition="top center",
+        line=dict(color='#2ca02c', width=4, dash='dash'), marker=dict(size=10)
+    ), secondary_y=False)
+
+    # 3. Conservative Alpha Investment (Light Blue)
+    fig_macro_abs.add_trace(go.Scatter(
+        x=econ['year_str'], y=econ['inv_low_tot'], name=f'Conservative (α={ALPHA_LOW})',
+        mode='lines+markers+text', text=fmt_b(econ['inv_low_tot']), textposition="bottom center",
+        line=dict(color='#a6cee3', width=4), marker=dict(size=10)
+    ), secondary_y=False)
+
+    # 4. Total Economy GVA (Gray, on Secondary Axis)
+    fig_macro_abs.add_trace(go.Scatter(
+        x=econ['year_str'], y=econ['GVA_basic_prices'], name='Total UK Economy GVA',
+        mode='lines+markers+text', text=fmt_t(econ['GVA_basic_prices']), textposition="top right",
+        line=dict(color='#A9A9A9', width=3, dash='dot'), marker=dict(size=8)
+    ), secondary_y=True)
+
+    fig_macro_abs.update_layout(
+        title="Total UK Gross Value Added (GVA) vs. Data Investment Scenarios",
+        template="plotly_white", height=700, legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)")
+    )
     
-    # 4. Apply the Polish Filter (Must score >= 0.45)
-    FINAL_SIM_THRESHOLD = 0.45 
-    polished_pdf = pdf[pdf['gold_sim_score'] >= FINAL_SIM_THRESHOLD]
+    # Pad the axes so labels don't get cut off
+    fig_macro_abs.update_yaxes(title_text="Data Investment (Billions)", secondary_y=False, range=[0, econ['total_investment_sector'].max() * 1.5])
+    fig_macro_abs.update_yaxes(title_text="Total GVA (Trillions)", secondary_y=True, showgrid=False, range=[0, econ['GVA_basic_prices'].max() * 1.3])
     
-    # 5. Push the clean data back to the Spark Cluster
-    # We specify the schema to ensure a perfectly clean handoff back to PySpark
-    from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
-    schema = StructType([
-        StructField("noun_chunk", StringType(), True),
-        StructField("relative_share", DoubleType(), True),
-        StructField("avg_sim", DoubleType(), True),
-        StructField("global_count", LongType(), True),
-        StructField("gold_sim_score", DoubleType(), True)
-    ])
+    fig_macro_abs.show()
+
+
+
+
+
+# ==========================================
+# CELL 6d: DATA INVESTMENT AS % OF UK ECONOMY
+# ==========================================
+if not pdf.empty:
+    econ["Conservative %"] = (econ["inv_low_tot"] / econ["GVA_basic_prices"]) * 100
+    econ["Economy Avg %"] = (econ["inv_avg_tot"] / econ["GVA_basic_prices"]) * 100
+    econ["Sector Map %"] = (econ["total_investment_sector"] / econ["GVA_basic_prices"]) * 100
+
+    fig_macro_pct = px.line(
+        econ, x="year_str", y=["Sector Map %", "Economy Avg %", "Conservative %"], 
+        title="Data Investment as a Percentage of Total UK Economy (GVA)", 
+        markers=True, template="plotly_white",
+        labels={'value': '% of Total GVA', 'variable': 'Valuation Scenario', 'year_str': 'Year'},
+        color_discrete_sequence=["#00008b", "#2ca02c", "#a6cee3"]
+    )
+
+    fig_macro_pct.update_traces(line=dict(width=4), marker=dict(size=10))
+    fig_macro_pct.update_yaxes(ticksuffix=" %")
+    fig_macro_pct.show()
+
+
+
+
+
+# ==========================================
+# CELL 6e: DATA INVESTMENT AS % OF SECTOR GVA (3 SCENARIOS)
+# ==========================================
+if not pdf.empty:
+    def plot_sector_intensity(y_col, title_suffix):
+        fig = px.line(
+            pdf, x="year_str", y=y_col, color="SIC_Code",
+            title=f"Data Investment Intensity by Sector ({title_suffix})",
+            labels={y_col: '% of Sector GVA', 'SIC_Code': 'Industry (SIC)', 'year_str': 'Year'},
+            markers=True, template="plotly_white", height=500
+        )
+        fig.update_traces(line=dict(width=3), marker=dict(size=8))
+        fig.update_yaxes(ticksuffix=" %")
+        fig.show()
+
+    plot_sector_intensity("inv_share_gva_sector", "Sector-Specific Alpha Markup")
+    plot_sector_intensity("inv_share_gva_avg", f"Economy Average Alpha: {ALPHA_ECONOMY_AVG}")
+    plot_sector_intensity("inv_share_gva_low", f"Conservative Alpha: {ALPHA_LOW}")
+
+
+
+
+
+# ==========================================
+# CELL 6l: DATA INTENSITY BY TOP 20 SOC CODES (PERCENTAGE HEATMAP)
+# ==========================================
+if occ_frames and not all_occ_df.empty:
+    # 1. Find the top 20 SOCs by their average intensity across all years
+    soc_avg_pct = all_occ_df.groupby('soc4')['total_data_share'].mean().reset_index()
+    top_20_socs_pct = soc_avg_pct.nlargest(20, 'total_data_share')['soc4'].tolist()
     
-    # THE FIX: Convert Pandas DF to a pure Python list to bypass the 'iteritems' version bug
-    # First, ensure columns are in the exact order as our schema
-    polished_pdf = polished_pdf[['noun_chunk', 'relative_share', 'avg_sim', 'global_count', 'gold_sim_score']]
+    # 2. Filter and pivot
+    filtered_pct = all_occ_df[all_occ_df['soc4'].isin(top_20_socs_pct)]
+    heatmap_soc_pct = filtered_pct.pivot(index='soc4', columns='year_str', values='total_data_share')
     
-    # Convert to a standard list of lists
-    clean_data_list = polished_pdf.values.tolist()
+    fig_heat_soc_pct = px.imshow(
+        heatmap_soc_pct, 
+        title="Heatmap: Data-Intensity Percentage by Top 20 Occupations",
+        labels=dict(x="Year", y="SOC 2020 Code", color="% of Adverts"),
+        color_continuous_scale="Purples", aspect="auto", template="plotly_white", height=700,
+        text_auto=".1f"
+    )
+    fig_heat_soc_pct.update_yaxes(type='category')
+    fig_heat_soc_pct.show()
+
+
+
+
+
+# ==========================================
+# CELL 6m: DATA VOLUME BY TOP 20 SOC CODES (ABSOLUTE COUNT HEATMAP)
+# ==========================================
+if occ_frames and not all_occ_df.empty:
+    # 1. Find the top 20 SOCs by their average absolute volume
+    soc_avg_vol = all_occ_df.groupby('soc4')['any_data_intensive_jobs'].mean().reset_index()
+    top_20_socs_vol = soc_avg_vol.nlargest(20, 'any_data_intensive_jobs')['soc4'].tolist()
     
-    # Create the Spark DataFrame from the Python list
-    oecd_vocabulary = spark.createDataFrame(clean_data_list, schema=schema).cache()
+    # 2. Filter and pivot
+    filtered_vol = all_occ_df[all_occ_df['soc4'].isin(top_20_socs_vol)]
+    heatmap_soc_vol = filtered_vol.pivot(index='soc4', columns='year_str', values='any_data_intensive_jobs')
     
-    print(f"Post-Polish Dictionary Size: {oecd_vocabulary.count()} terms")
-    
-    print("\n=== TOP 30 SURVIVORS (By Volume) ===")
-    oecd_vocabulary.orderBy(F.col("global_count").desc()).limit(30).select("noun_chunk", "global_count", "gold_sim_score").show(truncate=False)
+    fig_heat_soc_vol = px.imshow(
+        heatmap_soc_vol, 
+        title="Heatmap: Absolute Volume of Data Jobs by Top 20 Occupations",
+        labels=dict(x="Year", y="SOC 2020 Code", color="Job Count"),
+        color_continuous_scale="Oranges", aspect="auto", template="plotly_white", height=700,
+        text_auto=",.0f"
+    )
+    fig_heat_soc_vol.update_yaxes(type='category')
+    fig_heat_soc_vol.show()
+
+
+
+
