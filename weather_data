@@ -406,7 +406,10 @@ print("\n" + "="*50)
 print(f"PIPELINE COMPLETE. All reports saved to: {config.REPORTS_DIR}")
 print("="*50 + "\n")
 
-
-
+GOLD_STANDARD = [
+    "data entry", "spreadsheet", "database", "typing", "data processing", 
+    "crm", "erp", "transcription", "data input", "data capture", 
+    "data management", "excel", "data records", "logbook"
+]
 
 
