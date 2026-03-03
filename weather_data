@@ -1,13 +1,13 @@
 # ==========================================
-# CELL 3.5: EXPORT JOB-LEVEL CLASSIFICATIONS (DRIVER-SIDE BYPASS)
+# CELL 3.5: EXPORT JOB-LEVEL CLASSIFICATIONS (DATA INTENSIVE ONLY)
 # ==========================================
 import os
 import pyspark.sql.functions as F
 
-print("--- Phase 3.5: Exporting Job-Level IDs ---")
+print("--- Phase 3.5: Exporting Data-Intensive Job IDs ---")
 
-# We define a direct file path instead of a directory path
-EXPORT_FILE = os.path.join(BASE_PATH, "job_level_export_data_entry.csv")
+# Define the file path for your filtered data
+EXPORT_FILE = os.path.join(BASE_PATH, "job_level_export_data_entry_ONLY.csv")
 
 if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
     all_years_df = None
@@ -38,12 +38,16 @@ if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
         # Classify the job (1 if it has 3+ data words, else 0)
         is_intensive = (F.col("unique_data_terms") >= DATA_THRESHOLD).cast("int")
         
+        # THE FIX: Apply the filter to drop broken SOCs AND drop all non-data jobs (the 0s)
         classified_jobs = job_scores.select(
             F.lit(year).alias("year"),
             F.col("doc_JobID"),
             F.regexp_extract("doc_BGTOcc", r"(\d{4})", 1).alias("soc4"),
-            is_intensive.alias("is_data_intensive_job") # 1 = Yes, 0 = No
-        ).filter(F.col("soc4") != "")
+            is_intensive.alias("is_data_intensive_job")
+        ).filter(
+            (F.col("soc4") != "") & 
+            (F.col("is_data_intensive_job") == 1) # STRICT FILTER: Only keep the 1s!
+        )
         
         # Append to master dataframe
         if all_years_df is None:
@@ -53,13 +57,15 @@ if 'oecd_vocabulary' in globals() and oecd_vocabulary is not None:
 
     if all_years_df is not None:
         total_jobs = all_years_df.count()
-        print(f"Exporting {total_jobs} tagged jobs to CSV...")
+        print(f"Exporting {total_jobs} pure Data-Intensive jobs to CSV...")
         
-        # THE FIX: Pull the lightweight 4-column data to the driver and save with Pandas.
-        # This completely bypasses the worker node file-permission errors.
+        # Pull the ultra-lightweight filtered data to the driver and save with Pandas
         pdf_export = all_years_df.toPandas()
-        pdf_export.to_csv(EXPORT_FILE, index=False)
         
-        print(f"✓ Job-Level Data Exported Successfully to: {EXPORT_FILE}")
+        # Explicitly define file name as requested
+        EXPORT_FILE = "job_level_export_data_entry_ONLY.csv"
+        
+        pdf_export.to_csv(EXPORT_FILE, index=False)
+        print(f"✓ Filtered Job-Level Data Exported Successfully to: {EXPORT_FILE}")
 else:
     print("Cannot export: Dictionary not found.")
