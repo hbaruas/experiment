@@ -418,29 +418,9 @@ GOLD_STANDARD = [
 
 
 
-# ==========================================
-# PHASE 6: REPORTS & CHART EXPORTS (HTML)
-# ==========================================
-print("\n--- PHASE 6: Exporting Interactive Charts to /reports ---")
-pdf = valued.toPandas()
-pdf['year_str'] = pdf['year'].astype(str)
-econ = pdf.groupby("year_str")[["inv_raw_wages", "inv_low_tot", "inv_avg_tot", "total_investment_sector", "GVA_basic_prices"]].sum().reset_index()
-
-# THE FIX: Export as standalone HTML files instead of PNGs
 def save_fig(fig, filename):
     filepath = os.path.join(config.REPORTS_DIR, f"{filename}.html")
-    # include_plotlyjs="cdn" keeps the file size incredibly small!
-    fig.write_html(filepath, include_plotlyjs="cdn")
+    # THE FIX: Change "cdn" to True. This packs the drawing engine inside the file offline!
+    fig.write_html(filepath, include_plotlyjs=True)
     print(f"  -> Saved {filename}.html")
-
-# 1. Dictionary Word Cloud (Saved as standard JPG instead of PNG to avoid Kaleido)
-vocab_pdf = oecd_vocabulary.toPandas()
-vocab_pdf['noun_chunk'] = vocab_pdf['noun_chunk'].astype(str).str.replace(r'\n|\r', ' ', regex=True)
-word_freq = dict(zip(vocab_pdf['noun_chunk'], vocab_pdf['relative_share']))
-wc = WordCloud(width=1200, height=800, background_color='white', colormap='viridis', max_words=100)
-wc.generate_from_frequencies(word_freq)
-
-# Save as SVG or JPG natively using wordcloud's built-in exporter
-wc.to_file(os.path.join(config.REPORTS_DIR, "1_Dictionary_WordCloud.svg"))
-print("  -> Saved 1_Dictionary_WordCloud.svg")
 
