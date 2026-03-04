@@ -416,11 +416,41 @@ GOLD_STANDARD = [
 
 
 
+# ==========================================
+# PHASE 3: CLASSIFICATION & EXPORT
+# ==========================================
+print("\n--- PHASE 3: Job Classification ---")
+def run_classification_for_year(year):
+    try: packed_chunks = spark.read.parquet(config.get_nlp_path(year))
+    except: return None
 
+    # THE FIX: Calculate and neatly print the total number of jobs for this specific year
+    total_yearly_jobs = packed_chunks.count()
+    print(f"  -> {year} Total Jobs in Economy: {total_yearly_jobs:,}")
 
-def save_fig(fig, filename):
-    filepath = os.path.join(config.REPORTS_DIR, f"{filename}.html")
-    # THE FIX: Change "cdn" to True. This packs the drawing engine inside the file offline!
-    fig.write_html(filepath, include_plotlyjs=True)
-    print(f"  -> Saved {filename}.html")
+    year_chunks = packed_chunks.select("doc_JobID", "doc_BGTOcc", F.explode(F.arrays_zip("noun_chunks", "sim_scores")).alias("zipped")).select("doc_JobID", "doc_BGTOcc", F.col("zipped.noun_chunks").alias("noun_chunk"), F.col("zipped.sim_scores").alias("sim_data")).filter(F.col("sim_data") >= config.SIM_GROUNDING)
+    tagged_chunks = year_chunks.join(F.broadcast(oecd_vocabulary), "noun_chunk", "inner")
+    job_scores = tagged_chunks.groupBy("doc_JobID", "doc_BGTOcc").agg(F.countDistinct("noun_chunk").alias("unique_data_terms")).withColumnRenamed("doc_BGTOcc", "soc_2020")
+    job_scores = job_scores.withColumn("soc4", F.regexp_extract("soc_2020", r"(\d{4})", 1)).filter(F.col("soc4") != "")
+    
+    is_intensive = (F.col("unique_data_terms") >= config.DATA_THRESHOLD)
+    classified = job_scores.withColumn("data_entry", (F.col("soc4").isin(config.SOC_GROUPS["data_entry"]) & is_intensive).cast("int")).withColumn("database", F.lit(0)).withColumn("data_analytics", F.lit(0)).withColumn("any_data_intensive", is_intensive.cast("int"))
 
+    all_jobs_year = packed_chunks.select("doc_JobID", F.col("doc_BGTOcc").alias("soc_2020")).distinct().withColumn("soc4", F.regexp_extract("soc_2020", r"(\d{4})", 1)).filter(F.col("soc4") != "")
+    merged = all_jobs_year.join(classified, ["doc_JobID", "soc4", "soc_2020"], "left").fillna(0)
+
+    occ_sum = merged.groupBy("soc4").agg(F.count("*").alias("total_jobs"), F.sum("data_entry").alias("data_entry_jobs"), F.sum("database").alias("database_jobs"), F.sum("data_analytics").alias("data_analytics_jobs"), F.sum("any_data_intensive").alias("any_data_intensive_jobs")).withColumn("year", F.lit(year))
+    return occ_sum.withColumn("total_data_share", 100 * F.col("any_data_intensive_jobs") / F.col("total_jobs")).withColumn("data_entry_share", 100 * F.col("data_entry_jobs") / F.col("total_jobs")).withColumn("database_share", F.lit(0.0)).withColumn("data_analytics_share", F.lit(0.0)), job_scores.select(F.lit(year).alias("year"), F.col("doc_JobID"), F.col("soc4"), is_intensive.cast("int").alias("is_data_intensive_job")).filter((F.col("soc4") != "") & (is_intensive.cast("int") == 1))
+
+occupation_summaries = {}
+all_years_jobs_df = None
+for y in config.YEARS:
+    result = run_classification_for_year(y)
+    if result:
+        occupation_summaries[y] = result[0]
+        all_years_jobs_df = result[1] if all_years_jobs_df is None else all_years_jobs_df.unionByName(result[1])
+
+print("\n--- PHASE 3.5: Exporting Data-Intensive Job IDs ---")
+if all_years_jobs_df is not None:
+    all_years_jobs_df.toPandas().to_csv(config.JOB_EXPORT_FILE, index=False)
+    print(f"✓ Saved to {config.JOB_EXPORT_FILE}")
