@@ -454,3 +454,20 @@ print("\n--- PHASE 3.5: Exporting Data-Intensive Job IDs ---")
 if all_years_jobs_df is not None:
     all_years_jobs_df.toPandas().to_csv(config.JOB_EXPORT_FILE, index=False)
     print(f"✓ Saved to {config.JOB_EXPORT_FILE}")
+
+
+
+
+
+
+
+This paper presents a methodology for estimating data investment in the UK economy using information from online job advertisements. By applying natural language processing to extract task-level signals from job postings, we identify occupations and sectors where data-related work is concentrated. These signals are combined with national accounts data, including labour compensation and Supply and Use Tables, to estimate the economic footprint of data work. The results provide new experimental indicators of how data-related labour contributes to economic production.
+
+
+
+
+
+
+
+
+This study develops an experimental framework to measure data-intensive work in the UK economy using online job advertisements. Building on the OECD task-based methodology, natural language processing is used to identify data-related activities within job descriptions and construct a dictionary of data work anchored in occupations associated with data processing, database management, and analytics. These task signals are then linked to national accounts using UK Supply and Use Tables and labour compensation data to estimate the sectoral distribution and economic magnitude of data-related labour across the economy
