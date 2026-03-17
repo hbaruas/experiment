@@ -458,16 +458,62 @@ if all_years_jobs_df is not None:
 
 
 
+# --- EXPORT & NLP SETTINGS ---
+# EXPORT_DIR = os.path.join(os.getcwd(), "online_job_ads", "OECD_DATA_ENTRY")
+# FORCE_RECOMPUTE_NLP = True  <-- Only True for the very first run!
+
+# --- SOC & ANCHOR CONFIGURATION ---
+SOC_GROUPS = {
+    # 4152: Data entry administrators
+    "data_entry": ["4152"],  
+    "database":   ["99999"], 
+    "analytics":  ["99999"]
+}
+ALL_ANCHOR_SOCS = ["4152"]
+
+GOLD_STANDARD = [
+    "data entry", "spreadsheet", "database", "typing", "data processing", 
+    "crm", "erp", "transcription", "data input", "data capture", 
+    "data management", "excel", "data records", "logbook"
+]
 
 
 
-This paper presents a methodology for estimating data investment in the UK economy using information from online job advertisements. By applying natural language processing to extract task-level signals from job postings, we identify occupations and sectors where data-related work is concentrated. These signals are combined with national accounts data, including labour compensation and Supply and Use Tables, to estimate the economic footprint of data work. The results provide new experimental indicators of how data-related labour contributes to economic production.
+# --- EXPORT & NLP SETTINGS ---
+# EXPORT_DIR = os.path.join(os.getcwd(), "online_job_ads", "OECD_DATABASE")
+# FORCE_RECOMPUTE_NLP = False 
+
+# --- SOC & ANCHOR CONFIGURATION ---
+SOC_GROUPS = {
+    # 3133: Database administrators and web content technicians
+    "data_entry": ["3133"],  
+    "database":   ["99999"], 
+    "analytics":  ["99999"]
+}
+ALL_ANCHOR_SOCS = ["3133"]
+
+GOLD_STANDARD = [
+    "database", "sql", "oracle", "relational database", "database administration", 
+    "dbms", "data warehousing", "nosql", "database management", "server"
+]
 
 
+# --- EXPORT & NLP SETTINGS ---
+# EXPORT_DIR = os.path.join(os.getcwd(), "online_job_ads", "OECD_ANALYTICS")
+# FORCE_RECOMPUTE_NLP = False 
 
+# --- SOC & ANCHOR CONFIGURATION ---
+SOC_GROUPS = {
+    # 3544: Data analysts
+    # 2433: Actuaries, economists and statisticians (covers Data Scientists)
+    "data_entry": ["3544", "2433"],  
+    "database":   ["99999"], 
+    "analytics":  ["99999"]
+}
+ALL_ANCHOR_SOCS = ["3544", "2433"]
 
-
-
-
-
-This study develops an experimental framework to measure data-intensive work in the UK economy using online job advertisements. Building on the OECD task-based methodology, natural language processing is used to identify data-related activities within job descriptions and construct a dictionary of data work anchored in occupations associated with data processing, database management, and analytics. These task signals are then linked to national accounts using UK Supply and Use Tables and labour compensation data to estimate the sectoral distribution and economic magnitude of data-related labour across the economy
+GOLD_STANDARD = [
+    "analytics", "data analysis", "tableau", "power bi", "dashboard", 
+    "statistics", "data visualisation", "machine learning", "predictive modelling",
+    "python", "algorithms"
+]
