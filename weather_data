@@ -517,3 +517,26 @@ GOLD_STANDARD = [
     "statistics", "data visualisation", "machine learning", "predictive modelling",
     "python", "algorithms"
 ]
+
+
+
+
+
+
+def filter_dataset_by_csv_ids(main_df, csv_path, id_column_in_csv="doc_JobID", id_column_in_df="job_id"):
+    # 1. Load the CSV filter list
+    filter_df = spark.read.csv(csv_path, header=True, inferSchema=True)
+    
+    # 2. Get unique IDs from CSV to ensure 1:1 mapping logic
+    id_list_df = filter_df.select(F.col(id_column_in_csv).alias(id_column_in_df)).distinct()
+    
+    # 3. Filter the main dataset
+    filtered_df = main_df.join(id_list_df, on=id_column_in_df, how="left_semi")
+    
+    # --- The lines to print the counts ---
+    print(f"Filter List Count (CSV): {id_list_df.count()} | Final Dataset Count: {filtered_df.count()}")
+    
+    return filtered_df
+
+# Execute and check counts
+textkernel_df = filter_dataset_by_csv_ids(textkernel_df, "your_file.csv")
