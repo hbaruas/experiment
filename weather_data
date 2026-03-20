@@ -522,18 +522,39 @@ GOLD_STANDARD = [
 
 
 
-
-def filter_dataset_by_csv_ids(main_df, csv_path, id_column_in_csv="doc_JobID", id_column_in_df="job_id"):
+def filter_and_validate_dataset(main_df, csv_path, id_col_csv="doc_JobID", id_col_df="job_id"):
+    # 1. Load CSV and get unique IDs
     filter_df = spark.read.csv(csv_path, header=True, inferSchema=True)
-    id_list_df = filter_df.select(F.col(id_column_in_csv).alias(id_column_in_df)).distinct()
+    csv_ids = filter_df.select(F.col(id_col_csv).alias(id_col_df)).distinct()
     
-    # Perform the filter
-    filtered_df = main_df.join(id_list_df, on=id_column_in_df, how="left_semi")
+    csv_count = csv_ids.count()
     
-    # ADD THIS LINE: Deduplicate based on job_id to ensure 1:1 mapping
-    # This keeps only the first occurrence of each job_id found
-    final_df = filtered_df.dropDuplicates([id_column_in_df])
+    # 2. Filter and Deduplicate main dataset
+    # left_semi ensures we only keep rows matching the CSV
+    # dropDuplicates ensures 1:1 mapping
+    filtered_df = main_df.join(csv_ids, on=id_col_df, how="left_semi") \
+                         .dropDuplicates([id_col_df])
     
-    print(f"Filter List Count (CSV): {id_list_df.count()} | Final Dataset Count: {final_df.count()}")
+    final_count = filtered_df.count()
     
-    return final_df
+    # 3. Validation Logic (The "Nerve-Calmer")
+    # Find IDs that were in the CSV but didn't make it to the final DF
+    missing_df = csv_ids.join(filtered_df, on=id_col_df, how="left_anti")
+    missing_count = missing_df.count()
+    
+    print("-" * 30)
+    print(f"VALIDATION REPORT:")
+    print(f"Total Unique IDs in CSV:   {csv_count}")
+    print(f"Total Rows in Filtered DF: {final_count}")
+    print(f"IDs not found in Main Data: {missing_count}")
+    
+    if csv_count == (final_count + missing_count):
+        print("✅ SUCCESS: Data integrity verified. All CSV IDs accounted for.")
+    else:
+        print("⚠️ WARNING: Count mismatch. Investigate potential data overlaps.")
+    print("-" * 30)
+    
+    return filtered_df
+
+# Usage
+textkernel_df = filter_and_validate_dataset(textkernel_df, "your_file.csv")
