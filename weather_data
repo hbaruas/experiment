@@ -164,7 +164,7 @@ else:
     valid_chunks.unpersist()
 
 # ==========================================
-# PHASE 2.5: ENSEMBLE NLP POLISH
+# PHASE 2.5: ENSEMBLE NLP POLISH (SUPERCHARGED + TQDM)
 # ==========================================
 print("\n--- PHASE 2.5: Ensemble NLP Polish ---")
 if config.USE_EXISTING_POLISHED_DICTIONARY and os.path.exists(config.POLISHED_DICT_CSV_PATH):
@@ -174,19 +174,37 @@ if config.USE_EXISTING_POLISHED_DICTIONARY and os.path.exists(config.POLISHED_DI
 else:
     print("Polishing dictionary against Gold Standard...")
     pdf = oecd_vocabulary.toPandas()
+    
     if pdf.empty:
-        print("  [WARNING] Raw dictionary is empty. Lower REL_SHARE_THRESHOLD or global_count.")
+        print("  [WARNING] Raw dictionary is empty. Check Phase 2 thresholds.")
     else:
         try: nlp_driver = spacy.load("en_core_web_lg")
         except: nlp_driver = spacy.load("en_core_web_sm")
         
+        from tqdm import tqdm  # Import the progress bar
+        
         gold_docs = [nlp_driver(g) for g in config.GOLD_STANDARD]
-        def get_max_sim(phrase):
-            if not phrase: return 0.0
-            return float(max([nlp_driver(str(phrase)).similarity(g) for g in gold_docs])) if gold_docs else 0.0
+        
+        # 1. Extract phrases to a raw Python list for high-speed batching
+        phrases = pdf['noun_chunk'].fillna("").astype(str).tolist()
+        scores = []
+        
+        total_phrases = len(phrases)
+        print(f"  -> Ready to process {total_phrases:,} dictionary terms...")
+        
+        # 2. Wrap nlp.pipe with tqdm for a real-time progress bar
+        for doc in tqdm(nlp_driver.pipe(phrases, batch_size=2000), total=total_phrases, desc="Scoring against Gold Standard"):
+            # Check if word is garbage/empty to avoid warnings
+            if doc.has_vector and doc.vector_norm != 0:
+                scores.append(float(max([doc.similarity(g) for g in gold_docs])) if gold_docs else 0.0)
+            else:
+                scores.append(0.0)
 
-        pdf['gold_sim_score'] = pdf['noun_chunk'].apply(get_max_sim)
+        # 3. Apply scores and filter
+        pdf['gold_sim_score'] = scores
         polished_pdf = pdf[pdf['gold_sim_score'] >= 0.45]
+        
+        print(f"  -> Polishing Complete. Retained {len(polished_pdf):,} highly relevant terms.")
         polished_pdf.to_csv(config.POLISHED_DICT_CSV_PATH, index=False)
 
         schema = StructType([
@@ -194,6 +212,8 @@ else:
             StructField("avg_sim", DoubleType(), True), StructField("global_count", LongType(), True), StructField("gold_sim_score", DoubleType(), True)
         ])
         oecd_vocabulary = spark.createDataFrame(polished_pdf[['noun_chunk', 'relative_share', 'avg_sim', 'global_count', 'gold_sim_score']].values.tolist(), schema=schema).cache()
+
+
 
 # ==========================================
 # PHASE 3: CLASSIFICATION & EXPORT (DYNAMIC)
