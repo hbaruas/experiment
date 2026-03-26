@@ -519,3 +519,73 @@ with open(config.AUDIT_LOG_FILE, "w") as f:
 print("\n" + "="*50)
 print(f"PIPELINE COMPLETE. All reports saved to: {config.REPORTS_DIR}")
 print("="*50 + "\n")
+
+
+
+
+
+
+
+
+
+
+
+
+# config.py - Data Analytics Gold Standard
+GOLD_STANDARD_ANALYTICS = [
+    "data analytics",
+    "machine learning",
+    "predictive modeling",
+    "statistical analysis",
+    "data visualization",
+    "business intelligence",
+    "artificial intelligence",
+    "data mining",
+    "quantitative analysis",
+    "econometrics",
+    "algorithm",
+    "deep learning",
+    "regression analysis",
+    "natural language processing",
+    "data science"
+]
+
+
+
+
+
+# config.py - Database Management Gold Standard
+GOLD_STANDARD_DATABASE = [
+    "database administration",
+    "data engineering",
+    "data warehouse",
+    "cloud infrastructure",
+    "etl pipeline",
+    "relational database",
+    "data architecture",
+    "nosql",
+    "database management system",
+    "data migration",
+    "data security",
+    "server maintenance",
+    "master data management",
+    "data modeling",
+    "query optimization"
+]
+
+
+
+
+
+
+Data Analytics Anchors:
+
+SOC 3544: Data analysts
+
+SOC 2433: Actuaries, economists and statisticians
+
+Database Management Anchors:
+
+SOC 3133: Database administrators
+
+SOC 2134: Programmers and software development professionals
