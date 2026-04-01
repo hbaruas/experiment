@@ -608,3 +608,41 @@ Adverts with 3+ distinct dictionary terms are classified as Data-Intensive. We e
 
 Discussion (156 / 166 characters)
 Data labor extends far beyond tech. Our real-time NLP framework enables policymakers to track intangible capital formation without lagging corporate surveys.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+For Fig 1 (AI Semantic Vector Space Filtration):
+
+To isolate technical skills from grammatical noise, the AI maps extracted phrases into a 300-dimensional semantic space. Phrases must cross a strict 0.35 Cosine Similarity boundary against the target concept ('data') to survive, effectively filtering out unrelated corporate jargon.
+
+For Fig 2 (Isolating Signals via Relative Share Mathematics):
+
+The pipeline employs a 10.0x 'Relative Share' threshold to eliminate generic office terms. To be classified as a true data skill, a term (e.g., 'Machine Learning') must appear at least 10 times more frequently in specialized Anchor Occupations than the baseline UK economy.
+
+For Fig 3 (Integration of Data Roles Across SIC Sectors):
+
+After classification, a Probabilistic SOC-to-SIC crosswalk maps identified data workers into their respective industries. This heatmap visualizes the structural integration of data-intensive labor across the wider UK economy over a 5-year period, establishing the framework for capital valuation.
