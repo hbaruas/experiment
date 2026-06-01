@@ -776,3 +776,19 @@ Plotted the absolute macroeconomic investment of data entry against Total UK Gro
 
 
 
+Here is the mathematical representation of the Probabilistic Crosswalk Matrix you engineered. This formula effectively demonstrates how you translate the raw job counts from Occupational codes (SOC) into Industry sectors (SIC) using demographic weights.
+
+$$E_{sic} = \sum_{soc} \left( E_{soc} \times P(sic|soc) \right)$$
+
+**Definitions to include on your slide:**
+
+* $E_{sic}$ = The final estimated volume of data-intensive jobs mapped to a specific Industry (SIC).
+* $E_{soc}$ = The total number of data-intensive jobs found in a specific Occupation (SOC) by your NLP pipeline.
+* $P(sic|soc)$ = The probability weight (derived from the UK Census) representing the historical percentage of workers in that specific SOC who operate within that specific SIC.
+
+**How to explain it during the presentation:**
+You can point to this equation and explain: *"Because our NLP pipeline identifies jobs by occupation ($E_{soc}$), we multiply those totals by a structural probability weight ($P(sic|soc)$) derived from the UK Census. By summing these distributions up, we mathematically reallocate our data workforce into their actual operating industries ($E_{sic}$), making the data National Accounts-ready."*
+
+This explicitly proves to your stakeholders that your crosswalk is a weighted, empirically grounded distribution rather than a broad estimation.
+
+
