@@ -792,3 +792,46 @@ You can point to this equation and explain: *"Because our NLP pipeline identifie
 This explicitly proves to your stakeholders that your crosswalk is a weighted, empirically grounded distribution rather than a broad estimation.
 
 
+
+
+
+
+
+import boto3
+
+s3 = boto3.client("s3")
+paginator = s3.get_paginator("list_objects_v2")
+
+bucket = "ais-data-142496269814"
+prefix = "exact-earth-data/transformed/prod/year=2026/month=06/"
+
+days_present = set()
+for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+    for cp in page.get("CommonPrefixes", []):
+        days_present.add(cp["Prefix"])
+
+for d in sorted(days_present):
+    print(d)
+
+
+
+
+Hi,
+
+I'm writing to flag a gap in the AIS data we're receiving via the UNGP platform.
+
+When running our shipping indicators pipeline, we noticed that the partitioned AIS data for 23 June 2026 is absent from the S3 bucket. The expected path does not exist:
+
+
+exact-earth-data/transformed/prod/year=2026/month=06/day=23
+All surrounding dates (22 June and 24 June) appear to be present. This single missing day is causing our pipeline to fail when we attempt to load any date range that spans 23 June.
+
+Could you please:
+
+Confirm whether data for 23 June 2026 was received from Exact Earth and processed
+Let us know if there was a known ingestion issue or outage on that date
+Advise whether the data can be backfilled, and if so, the expected timeline
+Our pipeline loads AIS positions day-by-day using explicit partition paths, so any single missing day breaks the full load. Knowing whether this is a temporary gap (data still being processed) or a permanent one (data was not received) will help us decide whether to wait or to work around it permanently.
+
+Thanks very much for your help.
+
