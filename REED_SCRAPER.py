@@ -5,10 +5,10 @@ import time
 import urllib3
 import os
 
-# ✅ Suppress SSL warnings
+# Suppress SSL warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ✅ Your REED API Key here
+# Your REED API Key here
 API_KEY = 'f28399a0-0590-48ad-b00c-3d5483f78c9d'
 
 # Constants
@@ -25,7 +25,7 @@ all_jobs = []
 page = 1
 empty_page_count = 0
 
-print("🔄 Starting job scraping...")
+print(" Starting job scraping...")
 
 # Create progress bar without knowing total jobs ahead of time
 progress = tqdm(desc='Fetching Jobs', ncols=100)
@@ -46,16 +46,16 @@ try:
         )
 
         if response.status_code != 200:
-            print(f"❌ Error {response.status_code}: {response.text}")
+            print(f" Error {response.status_code}: {response.text}")
             break
 
         jobs = response.json().get('results', [])
 
         if not jobs:
             empty_page_count += 1
-            print(f"⚠️ Empty page #{empty_page_count} (Page {page})")
+            print(f"Empty page #{empty_page_count} (Page {page})")
             if empty_page_count >= MAX_EMPTY_RESPONSES:
-                print("⛔ Too many empty pages, assuming end of data.")
+                print("Too many empty pages, assuming end of data.")
                 break
         else:
             empty_page_count = 0
@@ -72,11 +72,11 @@ try:
         time.sleep(0.5)
 
 except Exception as e:
-    print(f"\n⚠️ Script failed with error: {e}")
-    print("💾 Saving partial progress...")
+    print(f"\n Script failed with error: {e}")
+    print(" Saving partial progress...")
 
 finally:
     progress.close()
     pd.DataFrame(all_jobs).to_csv(FINAL_FILE, index=False)
-    print(f"\n✅ Finished. Total jobs scraped: {len(all_jobs)}")
-    print(f"📄 Final saved to: {FINAL_FILE}")
+    print(f"\n Finished. Total jobs scraped: {len(all_jobs)}")
+    print(f" Final saved to: {FINAL_FILE}")
