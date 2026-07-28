@@ -280,3 +280,17 @@ To extend coverage beyond the one worked example above, pick any industry code a
 | TC-19 | Coverage gap (F41–43, G47) | Tester 2 | | | | |
 | TC-20a | Own spot-check | Tester 1 | | | | |
 | TC-20b | Own spot-check (merged code) | Tester 2 | | | | |
+
+
+
+
+
+
+TC-21: Worked example — match CORD code `22100+22000` to its SU Level code
+
+- **Steps:**
+  1. Find `22100+22000` in `Hybrid A T % Growth Rates`, column A. It is at row 32.
+  2. Open `Comparison - Rev Hybrid-SU`. Use Excel's Find (Ctrl+F / Cmd+F), set "Within" to **Sheet** and "Look in" to **Formulas**, and search for `Hybrid A T % Growth Rates'!C32`.
+  3. This turns up in row 36, in the formula `=100*ABS('SU A % Growth Rates'!C35-'Hybrid A T % Growth Rates'!C32)` — this is the formula that ties the detail-code row (32) to the aggregate-code row (35).
+  4. Read column A of `SU Levels` (or `SU A % Growth Rates`) at row 35.
+- **Expected result:** `C22` ("Manufacture of rubber and plastic products" — see Part 11 of the QA report). As a cross-check, row 36 of `Comparison - Rev Hybrid-SU`, `Rev Comparison Hybrid vs MBS`, and `VAT Matrix` should all also be labelled `C22` (these sheets sit one row further down than the SU-side sheets, because of an extra header row).
