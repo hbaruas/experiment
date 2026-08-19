@@ -1,1 +1,21 @@
-Traditional National Accounts cannot "see" internal data assets. This session uses NLP and statistical modelling on 62.3 million job adverts to tell the hidden story of the UK’s digital transformation, demonstrating how statistics translates unstructured text into a concrete monetary valuation of the UK's intangible data economy
+Here are the primary papers you can cite that established and used the 1.5 multiplier, along with a summary you can adapt for your methodology section.
+
+### The References
+
+1. **The Originating Framework:**
+* **Citation:** Statistics Canada. (2019). *The value of data in Canada: Experimental estimates*.
+* **Why it's relevant:** This is the foundational paper where the statistical agency explicitly states that because they lack market sales data, they assume "non-direct salary and other costs represent 50% of the salary costs". This 50% markup is the exact origin of the 1.5 flat multiplier.
+
+
+2. **The Recent Application:**
+* **Citation:** Schmidt, J., Pilgrim, G., & Mourougane, A. (2023). *What is the role of data in jobs in the United Kingdom, Canada, and the United States?* OECD Statistics Working Papers.
+* **Why it's relevant:** This is the paper you originally linked. They explicitly use the 1.5 markup as their conservative "lower bound" estimate, citing the 2019 Statistics Canada paper as their justification.
+
+
+
+### Summary for Your Paper
+
+Here is a drafted summary you can drop into your paper to clearly justify why you used a flat 1.5 baseline alongside your own calculated alpha:
+
+> "To value own-account data assets, this study employs a sum-of-costs approach. Because these assets are produced internally and lack market prices, a markup multiplier (alpha) must be applied to direct labor costs to account for overhead, intermediate consumption, and a normal return on capital. While a custom alpha was calculated for this analysis to reflect specific market conditions, a flat baseline multiplier of 1.5 was also applied for reference and sensitivity analysis.
+> The use of a 1.5 multiplier—representing a 50% markup over direct salary costs—is a well-established, conservative benchmark in macroeconomic accounting. This baseline aligns with experimental data valuation frameworks developed by Statistics Canada (2019) and subsequent OECD methodologies (Schmidt et al., 2023). Utilizing this standardized lower bound provides a recognized comparative baseline to validate the custom estimates generated in this study."
