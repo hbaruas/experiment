@@ -1,21 +1,17 @@
-Here are the primary papers you can cite that established and used the 1.5 multiplier, along with a summary you can adapt for your methodology section.
+The issue: we don't actually know what collection_date represents, and three sources disagree.
 
-### The References
+The busyness indicator needs a date that reflects when someone traveled, not when they bought or processed a ticket. collection_date was the field proposed as the best available proxy. Before building on it, we checked it three ways, and got three different answers:
 
-1. **The Originating Framework:**
-* **Citation:** Statistics Canada. (2019). *The value of data in Canada: Experimental estimates*.
-* **Why it's relevant:** This is the foundational paper where the statistical agency explicitly states that because they lack market sales data, they assume "non-direct salary and other costs represent 50% of the salary costs". This 50% markup is the exact origin of the 1.5 flat multiplier.
+1. What we observed empirically in the data itself. collection_date is populated on every single one of the 3.73 billion rows — including e-tickets and mobile tickets, which have no physical "collection" step at all. It's also the field the underlying table is physically organized (partitioned) by, which is usually a sign of a pipeline/loading date rather than a passenger-facing event. Taken alone, this looks more like "when this record entered our systems" than "when someone traveled."
 
+2. A separate LENNON reference document you shared. It describes a field called travel_date — not collection_date — defined as "date when the ticket was collected; the closest date we have to the day the ticket was used." That's a near-perfect match in wording for what we'd want collection_date to mean, but it's a different field name, and travel_date doesn't appear anywhere in the view we've been given under that name.
 
-2. **The Recent Application:**
-* **Citation:** Schmidt, J., Pilgrim, G., & Mourougane, A. (2023). *What is the role of data in jobs in the United Kingdom, Canada, and the United States?* OECD Statistics Working Papers.
-* **Why it's relevant:** This is the paper you originally linked. They explicitly use the 1.5 markup as their conservative "lower bound" estimate, citing the 2019 Statistics Canada paper as their justification.
+3. ONS's own published methodology on this exact dataset (their Jan 2022 rail fares paper). Here it gets more confusing rather than less: ONS's own Prices Division states plainly that their internal proxy for "collection date" is a third field entirely — issuing_datetime — with the explicit caveat that for tickets bought and issued in the same transaction (the majority of modern e-tickets), the issue date is identical to the sale date, so it isn't a meaningful travel-date signal for most tickets either.
 
+So: three names, three plausible-sounding definitions, no clean way to reconcile them from the outside. Our best guess is that travel_date may be a newer field added after ONS's 2022 paper was written — specifically to fix the weakness they flagged in using issuing_datetime — and that collection_date in our view is that newer field, just exposed under a different name. But that's an inference chain across three separate documents, not something we can confirm ourselves.
 
+The specific question to ask:
 
-### Summary for Your Paper
+What does the collection_date column in this view actually correspond to in the source LENNON schema — is it the same field described elsewhere as travel_date, is it something else entirely, and is it distinct from issuing_datetime? If there's a recommended "best available proxy for travel date" field, which one should we be using?
 
-Here is a drafted summary you can drop into your paper to clearly justify why you used a flat 1.5 baseline alongside your own calculated alpha:
-
-> "To value own-account data assets, this study employs a sum-of-costs approach. Because these assets are produced internally and lack market prices, a markup multiplier (alpha) must be applied to direct labor costs to account for overhead, intermediate consumption, and a normal return on capital. While a custom alpha was calculated for this analysis to reflect specific market conditions, a flat baseline multiplier of 1.5 was also applied for reference and sensitivity analysis.
-> The use of a 1.5 multiplier—representing a 50% markup over direct salary costs—is a well-established, conservative benchmark in macroeconomic accounting. This baseline aligns with experimental data valuation frameworks developed by Statistics Canada (2019) and subsequent OECD methodologies (Schmidt et al., 2023). Utilizing this standardized lower bound provides a recognized comparative baseline to validate the custom estimates generated in this study."
+This is worth prioritizing above the other data-team questions — it's foundational to the entire first indicator (busyness by travel date), and everything else about that indicator depends on getting this right first.
