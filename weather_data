@@ -1,17 +1,22 @@
-The issue: we don't actually know what collection_date represents, and three sources disagree.
+Hi Ieuan,
 
-The busyness indicator needs a date that reflects when someone traveled, not when they bought or processed a ticket. collection_date was the field proposed as the best available proxy. Before building on it, we checked it three ways, and got three different answers:
+Thanks for this — really helpful. That settles which field to use.
 
-1. What we observed empirically in the data itself. collection_date is populated on every single one of the 3.73 billion rows — including e-tickets and mobile tickets, which have no physical "collection" step at all. It's also the field the underlying table is physically organized (partitioned) by, which is usually a sign of a pipeline/loading date rather than a passenger-facing event. Taken alone, this looks more like "when this record entered our systems" than "when someone traveled."
+One follow-up on that same point, actually: is there a documented methodology for how travel_date gets derived, particularly for e-tickets and mobile tickets? We noticed the date often doesn't match the issue date for those ticket types, which suggests there's some specific logic determining it rather than it just defaulting to the issue date — and if this ever ends up in a publication, we'd want to describe exactly how that figure is derived rather than just say it's "the closest approximation available."
 
-2. A separate LENNON reference document you shared. It describes a field called travel_date — not collection_date — defined as "date when the ticket was collected; the closest date we have to the day the ticket was used." That's a near-perfect match in wording for what we'd want collection_date to mean, but it's a different field name, and travel_date doesn't appear anywhere in the view we've been given under that name.
+A few other things have come up as we've been going through the data that would be useful to get your take on too, if you don't mind:
 
-3. ONS's own published methodology on this exact dataset (their Jan 2022 rail fares paper). Here it gets more confusing rather than less: ONS's own Prices Division states plainly that their internal proxy for "collection date" is a third field entirely — issuing_datetime — with the explicit caveat that for tickets bought and issued in the same transaction (the majority of modern e-tickets), the issue date is identical to the sale date, so it isn't a meaningful travel-date signal for most tickets either.
+How often is this data actually refreshed, and what does each load cover? We can see the row count growing during a single working session, so it's clearly updated more than daily — but we don't know if there's a fixed schedule or time, and more importantly, whether each load is just the previous day's records or something wider (a rolling window, say, or corrections landing against older dates too). We're trying to design a pipeline around this, so knowing whether we should expect backfilled or corrected rows turning up against dates we've already processed would really help us decide how to run things.
 
-So: three names, three plausible-sounding definitions, no clean way to reconcile them from the outside. Our best guess is that travel_date may be a newer field added after ONS's 2022 paper was written — specifically to fix the weakness they flagged in using issuing_datetime — and that collection_date in our view is that newer field, just exposed under a different name. But that's an inference chain across three separate documents, not something we can confirm ourselves.
+refund_reason has 16 different codes, but we can't find a description anywhere for what any of them mean. Is there a lookup table somewhere, or could you point us to what each code represents?
 
-The specific question to ask:
+Around 16% of refund rows don't have a refund_date_of_issue populated, even though they're clearly refunds (based on number_of_tickets going negative). Any idea why some refunds wouldn't get a date recorded — a different refund channel, maybe?
 
-What does the collection_date column in this view actually correspond to in the source LENNON schema — is it the same field described elsewhere as travel_date, is it something else entirely, and is it distinct from issuing_datetime? If there's a recommended "best available proxy for travel date" field, which one should we be using?
+We tried to work out how railcard_type relates to ticket_status_code/discount_code, since they looked like they should overlap, but the data doesn't back that up — rows coded as "26-30 RAILCARD" almost never have railcard_type populated, while plain adult fares sometimes do. Could you shed any light on what railcard_type is actually meant to capture?
 
-This is worth prioritizing above the other data-team questions — it's foundational to the entire first indicator (busyness by travel date), and everything else about that indicator depends on getting this right first.
+Last one — transaction_number only has around 100,000 distinct values across the whole 3.7 billion rows, which seems far too few for it to be a unique transaction ID. Do you know what this field actually represents?
+
+No rush on any of these, and happy to jump on a call if that's easier than typing it all out. Thanks again for the help so far.
+
+Best,
+Saurabh
