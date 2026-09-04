@@ -1,1 +1,24 @@
-
+Slide 3
+NLP Approach: Ingesting the UK Labour Market
+* The Alternative Data Asset: Processed a comprehensive dataset of 62.3 million raw UK job advertisements spanning a 6-year period to identify the labour driving "own-account" data creation.
+* Text Standardisation: Executed rigorous cleaning protocols to strip out grammatical stop words, remove special characters, and convert the entire text corpus to lowercase.
+* Noun Chunk Extraction: Deployed spaCy natural language processing to extract complete grammatical phrases rather than isolated single words, preserving critical technical context (e.g., "relational database management" instead of "database").
+* Initial Scale: This extraction phase expanded the raw job adverts into a gross dataset of approximately 8.7 billion individual noun chunks awaiting statistical evaluation.
+Office for National Statistics
+Official - sensitive
+Slide 4
+NLP Approach: The Mathematical Filtration Engine
+* 0.35 Semantic Boundary: Mapped phrases into a 300-dimensional vector space using cosine similarity, permanently filtering out unrelated jargon by requiring a strict mathematical proximity to the core concept of "data".
+* 10.0x Relative Share Multiplier: Eliminated generic office buzzwords by demanding that a technical phrase appear at least 10 times more frequently in specialised Anchor Occupations (e.g., Data Entry - SOC 4114) than in the baseline UK economy.
+* 0.45 Gold Standard Polish: Required surviving terms to achieve a high semantic similarity to undeniable, verified baseline pillars (e.g., CRM, ERP, data records).
+* The Classification Gate: Scanned the 62.3 million adverts against the final verified dictionary. A role was only classified as a "Data-Intensive Job" if it contained at least 3 distinct terms from the lexicon.
+Office for National Statistics
+Official - sensitive
+Slide 5
+NLP Approach: Macroeconomic Mapping & Valuation
+* Bridging the Structural Gap: Job advertisements are inherently categorised by Occupational codes (SOC), whereas National Accounts require Industry codes (SIC).
+* Probabilistic Crosswalk Matrix: Engineered a mathematical distribution model using census demographic weights to reallocate the identified data workforce from their SOC groups into their actual operating industry sectors.
+* Applying the Sum-of-Costs: Linked the SIC-mapped data workers to ONS Supply and Use Tables to isolate their specific Compensation of Employees (base wages).
+* Capital Valuation: Applied sector-specific Alpha ($\alpha$) markups to the isolated wages to account for physical overhead, software tools, and operating surplus, culminating in an absolute macroeconomic valuation of UK data assets.
+Office for National Statistics
+Official - sensitive
