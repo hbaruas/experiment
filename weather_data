@@ -1,20 +1,189 @@
-Slide 3 Notes: Ingesting the UK Labour Market
-* The Challenge: Own-account data lacks a market price; we cannot simply survey businesses for internal database values.
-* The Solution: Apply the Sum-of-Costs approach directly to human capital using 62.3 million job adverts over 6 years.
-* Data Cleaning: Raw text is too noisy. Stripped stop words, removed special characters, and enforced lowercase.
-* Context over Keywords: Used spaCy for Noun Chunk Extraction. Single words lose meaning; we need full concepts (e.g., "relational database management").
-* Initial Output: This extraction exploded the dataset from 62.3 million adverts into 8.7 billion raw phrases to analyze.
-Slide 4 Notes: The Mathematical Filtration Engine
-* The Goal: Aggressively filter 8.7 billion phrases to find genuine capital formation.
-* Step 1 (0.35 Boundary): Cosine similarity vector mapping. Drops completely unrelated office jargon.
-* Step 2 (10x Relative Share): Defends against buzzword inflation (e.g., "spreadsheet"). Skills must appear 10x more frequently in anchor roles (like Data Entry) than the wider economy.
-* Step 3 (0.45 Gold Standard): Final semantic check against undeniable baseline tools (CRM, ERP).
-* The Lexicon: Yielded a verified dictionary of ~2,400 terms.
-* Classification Rule: An advert must contain at least 3 distinct dictionary terms to be counted as a "Data-Intensive Job".
-Slide 5 Notes: Macroeconomic Mapping & Valuation
-* The Structural Gap: Adverts use Occupational codes (SOC); National Accounts require Industry codes (SIC).
-* The Bridge: Engineered a Probabilistic Crosswalk Matrix using census weights to mathematically distribute workers into their operating sectors.
-* Isolating Wages: Mapped workers link directly to ONS Supply and Use Tables to extract their specific Compensation of Employees (base wages).
-* The $\alpha$ Markup: Wages alone are not the asset. Applied sector-specific Alpha markups for physical overhead and software.
-* Anomaly Control: Volatile sectors (Real Estate, Agriculture) were explicitly capped at the 3.62 economy average to prevent structural spikes.
-* Final Output: A complete macroeconomic valuation of internal data assets, derived entirely from unstructured alternative data.
+What your actual pain points are
+You have three separate problems that feel like one:
+
+Recall is unmeasured — you know 88.4% of what the pipeline calls positive is genuinely positive, but you do not know what fraction of all genuinely positive jobs the pipeline is finding
+Re-evaluation is expensive — every parameter change requires repeating the manual exercise
+Domain transfer is expensive — moving to green jobs feels like starting from scratch
+These are solvable independently. Let me take each one.
+
+Problem 1 — Calculating recall without a full labeled dataset
+To calculate recall you need to know the false negative rate — jobs the pipeline missed that should have been included.
+
+The brute force approach (sample 100 random negatives, manually check) works but is painful. Here is a smarter approach using what you already have.
+
+The SOC anchor trick:
+
+You already know which SOC occupation codes are your ground truth positives. Database administrators (SOC 3133) should be data intensive — that is why they are anchor occupations. Cleaners (SOC 9111) should not be.
+
+
+Recall upper bound:
+  Sample 100 jobs where SOC code = 3133 (database administrators)
+  Run through pipeline
+  Count how many are classified as data-intensive
+  That % is your recall on the "obvious" positives
+If your pipeline only captures 60% of database administrator jobs, that is a recall problem you need to fix. If it captures 90%+, your recall on true positives is healthy.
+
+This costs you zero additional manual labeling because SOC codes are already in your data.
+
+The negative sanity check:
+
+
+Sample 100 jobs where SOC code is in clearly non-data occupations
+(e.g., 9111 cleaners, 6141 nursing auxiliaries, 5310 construction workers)
+Run through pipeline
+Any classified as data-intensive = false positives from a different angle
+Between these two checks you get bounds on both precision (from what you already have: 88.4%) and recall (from the anchor SOC sampling), without any new manual annotation.
+
+Problem 2 — Avoiding repeated manual work when you change parameters
+This is the most fixable problem and the answer is: treat the 100 labeled jobs as a permanent benchmark dataset.
+
+Right now you are thinking of that 100-job exercise as a one-time measurement. Instead, save those 100 jobs with their manual labels as a CSV file and never touch the labels again:
+
+
+job_id | full_text | manual_label (1/0/?) | notes
+Every time you change a parameter — DATA_THRESHOLD from 3 to 5, REL_SHARE_THRESHOLD from 10 to 15, GOLD_STANDARD with a new word — you run the pipeline on just those 100 jobs and compare output against the manual labels. You get updated precision and recall in seconds, not weeks.
+
+This is exactly how machine learning teams handle evaluation: you create a held-out test set once, label it once carefully, and then use it forever. The 100 jobs the reviewer coded are your test set. You do not need more.
+
+The only time you need new labeling is when you move to a new domain — but even then, 50 labeled examples is usually enough for a benchmark (not 500+).
+
+Problem 3 — Domain transfer to green jobs
+For green jobs you would need a new benchmark set, but you do not need anywhere near as many as you might think for parameter tuning. Here is the minimum viable approach:
+
+Run the pipeline on green jobs with default parameters
+Sample 50 positives, have someone label them — takes maybe 2 hours
+Sample 20 jobs from clearly green SOC codes (e.g., environmental scientists) — verifies recall
+Those 70 labeled examples become your green jobs benchmark forever
+The 50-job exercise is a one-time cost per domain, not a recurring cost. The recurring cost drops to zero once the benchmark exists.
+
+The vertical offset — this is a separate problem from accuracy
+You said results follow the same trend as historical manual results but with a systematic offset. That is actually good news — it means the pipeline is measuring the right thing, just with a different baseline.
+
+A constant offset usually means one of three things:
+
+Scope difference — your pipeline captures a broader or narrower definition of "data intensive" than the historical manual method used
+Denominator difference — the historical figures may have used a different job universe (e.g., only full-time jobs, or only certain sectors)
+Threshold calibration — DATA_THRESHOLD or REL_SHARE_THRESHOLD is set too high or low relative to the manual definition
+You can diagnose which one it is without any new labeling: look at the offset by sector. If it is constant across all sectors, it is a calibration issue. If it varies, it is a scope or denominator issue.
+
+What I would actually do in your position
+In order of effort vs value:
+
+Week 1 (no new labeling):
+
+Save the 100 labeled jobs as a CSV benchmark file
+Build a 20-line evaluation script that runs those 100 jobs through the pipeline and prints precision/recall against the manual labels
+Run that script after every parameter change — this replaces all future manual re-evaluation for the data domain
+Week 2 (1–2 hours of new labeling):
+
+Sample 100 jobs from anchor SOC codes (3133, 2433, 3544) and run through pipeline — gives recall estimate on obvious positives
+Sample 50 jobs from clearly non-data SOC codes and run through pipeline — gives false positive rate from a different angle
+When moving to green jobs:
+
+Sample 50 pipeline positives, label them once
+Sample 20 from green SOC codes
+Those 70 become the green jobs benchmark permanently
+One question I have for you
+You mentioned a "vertical offset" — is this offset roughly constant across years (e.g., your pipeline consistently reads 2–3 percentage points higher than the historical figures), or does the gap grow or shrink over time?
+
+If it is constant, a simple scalar calibration correction is all you need and the relative comparisons across sectors and years are still valid. If it changes over time, that points to something structural in how the pipeline handles temporal variation which is worth diagnosing before publishing.
+
+
+Correction 1 — the 500-job minimum threshold:
+The dictionary is built on the full 62M corpus. A term only enters the dictionary if it appears in 500+ unique jobs. If you run the pipeline on a small sample of 100 jobs, no term will reach that threshold so the dictionary comes out empty. You cannot rebuild the dictionary on a small benchmark — it requires the full corpus every time any dictionary-level parameter changes.
+
+Correction 2 — anchor SOC ≠ ground truth positive:
+Even SOC 3133 (database administrators) will have job postings that are generic, poorly written, or administrative in nature and won't contain 3 vocabulary terms. So a database admin job posting is not a guaranteed true positive. The SOC code tells you the occupation — it says nothing about whether the specific job description mentions data skills explicitly enough to cross the threshold.
+
+What this changes
+My benchmark suggestion still works, but only for one specific case. Let me separate what is actually testable cheaply from what is not.
+
+Parameters that only affect Phase 3 (classification) — cheap to test:
+
+DATA_THRESHOLD is the only one. The dictionary is already built. You apply it to jobs. Changing DATA_THRESHOLD from 3 to 4 does not require rebuilding anything.
+
+For this parameter only, your 100 labeled jobs work as a permanent benchmark. You do not re-run the full pipeline — you just re-apply the threshold to the already-classified unique_data_terms counts for those 100 jobs. Precision and recall against your manual labels update instantly.
+
+Parameters that affect the dictionary — expensive, no shortcut:
+
+REL_SHARE_THRESHOLD, global_count >= 500, SIM_GROUNDING, GOLD_STANDARD all change which terms enter the dictionary. Changing any of these requires a full pipeline run on 62M jobs before you can evaluate anything. There is no cheap way around this.
+
+The recall problem given these constraints
+The honest situation: true recall cannot be calculated without a labeled dataset, and you cannot feasibly create one large enough for a corpus-dependent pipeline like this. That is not a failure of your approach — it is a known limitation of semi-supervised pipelines built on large unlabeled corpora.
+
+What you can do instead is estimate it indirectly through two approaches that do not require re-running the full pipeline:
+
+Approach 1 — Near-threshold sampling (most efficient)
+
+Your pipeline likely stores unique_data_terms per job during classification. The false negatives most likely to exist are jobs that scored 2 terms when the threshold is 3 — they almost made the cut.
+
+Sample 50 jobs where unique_data_terms = DATA_THRESHOLD - 1. Have someone label them. If 70%+ of those are genuinely data-intensive, your threshold is excluding real positives and recall is suffering. If only 20% are genuine, your threshold is calibrated correctly and your recall on the meaningful cases is probably reasonable.
+
+This is one 2-hour exercise, reusable for any threshold change, and it gives you directional recall evidence without needing a full labeled dataset.
+
+Approach 2 — Dictionary audit (no job labeling required)
+
+Instead of auditing jobs, audit the dictionary. Print the polished dictionary sorted by relative_share and have the same person who did your precision exercise spend one hour answering: are there obvious, well-known database/analytics skills that are missing from this list entirely?
+
+If "ETL", "data lake", "data warehouse", "data pipeline" are absent, that is direct evidence of a recall problem at the vocabulary level — the pipeline never had a chance to find jobs mentioning those skills. This does not require touching the 62M records at all.
+
+Missing terms in the dictionary = systematic false negatives in the classification.
+
+The practical workflow going forward
+Given all of this, here is what I would actually do:
+
+Goal	Method	One-time cost	Recurring cost
+Precision tracking	100-job benchmark CSV	Already done	Zero — re-evaluate automatically
+DATA_THRESHOLD tuning	Apply threshold to stored unique_data_terms for benchmark jobs	Zero	Zero
+Dictionary-level parameter changes	Full pipeline re-run + re-evaluate benchmark	Hours (pipeline)	Same — benchmark labels never change
+Recall estimate	Near-threshold sampling (unique_data_terms = threshold - 1)	2 hours once	Repeat if threshold changes
+Vocabulary gap detection	Dictionary audit	1 hour once per domain	Repeat if GOLD_STANDARD changes
+Green jobs domain	50 labeled positives + dictionary audit	3 hours once	Zero after that
+One question: does your pipeline currently export unique_data_terms per job alongside the binary is_data_intensive flag? If not, that is a one-line change worth making — it unlocks the near-threshold sampling without any extra computation.
+
+
+
+What you actually have is a precision-only validation with an estimated figure of 88.4%. That is one number. It tells you that when the pipeline says a job is data-intensive, it is right about 88% of the time. That is genuinely useful and not nothing.
+
+But for industry or academic standards you need at minimum:
+
+Precision and recall, giving you an F1 score
+A properly constructed held-out test set, labeled before you see the results (not after)
+Inter-annotator agreement score (Cohen's Kappa) to show the labels themselves are reliable — your reviewer noted 5 borderline cases out of 100, which is a meaningful ambiguity rate
+The test set should be stratified — representative across sectors, years, SOC codes — not just 100 random positives
+What you fundamentally lack is a ground truth labeled dataset built independently of the pipeline output. Everything built on top of that gap is a workaround, not a solution. The near-threshold sampling and dictionary auditing I described are diagnostic tools — they help you improve the pipeline — but they do not produce publishable validation metrics.
+
+The real options if you need this to be rigorous
+Option 1 — Commission a proper annotation exercise
+
+This is the industry standard answer. You would need:
+
+A stratified random sample of perhaps 500–1000 jobs drawn from the full corpus, independent of pipeline output
+Two or three independent annotators labeling each job
+An adjudication process for disagreements
+Inter-rater reliability reported alongside the results
+This is expensive. It is also the only way to get a number that survives peer review or external scrutiny.
+
+Option 2 — Reframe what the pipeline is and what it claims
+
+If full ground truth labeling is not feasible, the intellectually honest move is to reframe the pipeline not as a classifier with a precision/recall claim, but as a measurement instrument with a known calibration. You report:
+
+Precision of 88.4% on a sample of positives (with confidence interval)
+Known failure modes from the false positive analysis (semantically similar skills, long descriptions, etc.)
+Comparison to external benchmarks like ONS or OECD digital economy figures for face validity
+The systematic offset explained as a definitional scope difference
+This is what a lot of labour market research actually does. It is not claiming to be a machine learning classifier — it is claiming to be a measurement methodology with documented limitations. That is a legitimate and publishable framing if the limitations are stated clearly.
+
+Option 3 — Find or create a proxy labeled dataset from an external source
+
+Some organisations have done related work:
+
+OECD has its own digital skills classifications across member countries
+Lightcast (your data provider) may have their own skill taxonomy and tagged jobs
+Academic papers on digital labour markets sometimes release annotated datasets
+If any of these overlap with your job corpus you might be able to construct a test set without manual annotation.
+
+The honest summary
+The pipeline produces defensible and useful results. The 88.4% precision figure is real evidence. But if someone asked you in a formal review "what is your recall and how was your test set constructed", you currently do not have a satisfying answer. Whether that matters depends entirely on the audience and the purpose — internal policy work has a very different bar than a published methodology paper.
+
+What is the actual end use of this? That would determine how much rigour is genuinely needed versus how much would be over-engineering for the context.
